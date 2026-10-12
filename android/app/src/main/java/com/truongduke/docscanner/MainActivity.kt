@@ -15,6 +15,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -62,12 +63,15 @@ fun ScannerScreen(modifier: Modifier = Modifier) {
     val model = remember { MlsdModel(context).also { Log.d("MLSD", it.describe()) } }
     // Dòng chữ báo kết quả model
     var info by remember { mutableStateOf("") }
+    // Ảnh đã vẽ kết quả lên (null = chưa có, hiện ảnh gốc)
+    var annotated by remember { mutableStateOf<Bitmap?>(null) }
 
     // Mỗi khi đổi ảnh: chạy model ở luồng nền (không làm đơ giao diện), xong thì cập nhật info
     LaunchedEffect(bitmap) {
         val bmp = bitmap ?: return@LaunchedEffect
         info = "Đang chạy model..."
-        info = withContext(Dispatchers.Default) {
+        annotated = null
+        val (text, drawn) = withContext(Dispatchers.Default) {
             // 1. Model
             val out = model.run(bmp)
             // 2. Post-processing: cùng code với golden test (postprocess/src)
@@ -78,12 +82,16 @@ fun ScannerScreen(modifier: Modifier = Modifier) {
             val t2 = System.nanoTime()
 
             val best = sq.squares.firstOrNull()?.toList()?.chunked(2)?.joinToString(" ") { "(${it[0]}, ${it[1]})" } ?: "không có"
-            "Model: ${out.timeMs} ms\n" +
+            val text = "Model: ${out.timeMs} ms\n" +
                 "predLines: ${lines.size} đoạn, ${(t1 - t0) / 1_000_000} ms\n" +
                 "predSquares: ${sq.segments.size} đoạn gộp, ${sq.interPoints.size} góc, " +
                 "${sq.squares.size} tứ giác, ${(t2 - t1) / 1_000_000} ms\n" +
                 "Tứ giác tốt nhất: $best"
+            // 3. Vẽ kết quả lên bản sao của ảnh
+            Pair(text, drawResult(bmp, lines, sq.squares.firstOrNull()))
         }
+        info = text
+        annotated = drawn
         Log.d("MLSD", info)
     }
 
@@ -107,11 +115,13 @@ fun ScannerScreen(modifier: Modifier = Modifier) {
         } else {
             Text("Kích thước: ${bmp.width} x ${bmp.height}")
             Text(info)
+            Text("Cam: đoạn thẳng (predLines) | Xanh: tứ giác tốt nhất (predSquares)")
             Spacer(Modifier.height(8.dp))
             Image(
-                bitmap = bmp.asImageBitmap(),
+                bitmap = (annotated ?: bmp).asImageBitmap(),
                 contentDescription = "Ảnh đã chọn",
-                modifier = Modifier.fillMaxWidth(),
+                // Rộng hết màn hình, cao theo đúng tỉ lệ ảnh (ảnh nhỏ cũng được phóng to cho dễ nhìn)
+                modifier = Modifier.fillMaxWidth().aspectRatio(bmp.width.toFloat() / bmp.height),
                 contentScale = ContentScale.Fit,
             )
         }
