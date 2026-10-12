@@ -10,23 +10,26 @@ App scan tài liệu chạy offline trên Android, dùng M-LSD tiny 512 (phát h
 
 ## Cách làm việc với user (quan trọng)
 
-- **User tự viết phần cốt lõi**: post-processing (`predLines`, `predSquares`), phần sửa quantization. Agent KHÔNG viết thay phần này. Agent chỉ: chia nhỏ bước, đưa khung có chỗ trống `???`, gợi ý, review code user viết và chỉ ra chỗ sai.
-- Agent được viết phần phụ trợ: công cụ sinh dữ liệu test, phần đọc file / so sánh kết quả, cấu hình build Gradle, giao diện Android, CameraX, code vẽ.
-- Đưa code để user tự dán và tự chạy, kèm giải thích từng phần. Không tự chạy thí nghiệm thay user trừ khi user yêu cầu rõ ("chạy luôn đi").
+- Ban đầu user định tự viết phần cốt lõi (post-processing, sửa quantization), agent chỉ đưa khung `???` và review. Thực tế user đã đổi ý: `predLines`, `predSquares` do agent viết theo yêu cầu rõ, user review lại. Với phần sửa quantization (mốc 5), hỏi user muốn tự viết hay để agent viết trước khi bắt đầu.
+- Phần phụ trợ (công cụ sinh dữ liệu test, đọc file / so sánh, Gradle, giao diện Android, CameraX, code vẽ): agent sửa thẳng vào repo, tự build (`./gradlew installDebug` trong `android/`) và chạy thử trên máy ảo (adb), rồi báo kết quả kèm giải thích từng phần để user review. Chưa commit khi user chưa xem, trừ khi user bảo làm luôn.
 - User chưa vững Kotlin/Android, giải thích đơn giản, từng bước nhỏ.
 
 ## Tình trạng hiện tại: mốc 3
 
-Mốc 1, 2 xong, cả hai 6/6 PASS golden test. Hai mốc này agent viết theo yêu cầu rõ của user, user review lại:
-- `postprocess/PredLines.kt`: `predLines`.
-- `postprocess/PredSquares.kt`: `predSquares`, mọi phép tính sau bước lọc dùng `Double` (numpy là float64). Test so các tứ giác bằng điểm như một tập vì `np.argsort` không ổn định với mảng lớn.
+Mốc 1, 2 xong, cả hai 6/6 PASS golden test.
+- `postprocess/src/`: chỉ thuật toán, `package mlsd`. `PredLines.kt` (`predLines`), `PredSquares.kt` (`predSquares`, mọi phép tính sau bước lọc dùng `Double` vì numpy là float64).
+- `postprocess/test/`: golden test (`main`, đọc `.bin`). Test squares so các tứ giác bằng điểm như một tập vì `np.argsort` không ổn định với mảng lớn.
+- App Android dùng thẳng `postprocess/src` (sourceSets trong `android/app/build.gradle.kts`), nên golden test kiểm tra đúng code mà app chạy.
 
-Mốc 3: app Android chọn ảnh có sẵn, chạy model + `predLines`/`predSquares`, vẽ kết quả. Khi đưa vào app phải tách phần `main`/đọc golden ra khỏi hai file (trùng tên `main` khi dịch chung). Agent được viết phần app (Gradle, UI, vẽ), làm từng bước nhỏ để user tự dán và chạy.
+Mốc 3 (app chọn ảnh, detect, vẽ), project ở `android/` (Compose, package `com.truongduke.docscanner`, minSdk 26, LiteRT 1.0.1, model trong `app/src/main/assets/`):
+- Xong bước 1-4: tạo project, chọn ảnh (Photo Picker), chạy model (`MlsdModel.kt`), gọi `predLines`/`predSquares` và in kết quả.
+- Còn bước 5: vẽ đoạn thẳng + tứ giác tốt nhất lên ảnh; bước 6: khớp golden trong app (thay bilinear bằng resize kiểu `cv2.INTER_AREA`, hiện app lệch nhẹ: `frame_1` tứ giác tốt nhất trùng 2/4 góc với golden).
+- Ảnh mẫu đã đẩy vào máy ảo `/sdcard/Download/` bằng adb. Ảnh chụp dọc có thể bị xoay vì chưa đọc EXIF.
 
 Chạy golden test từ thư mục gốc repo:
 ```bash
-kotlinc postprocess/PredLines.kt -include-runtime -d build/predlines.jar && java -jar build/predlines.jar
-kotlinc postprocess/PredSquares.kt -include-runtime -d build/predsquares.jar && java -jar build/predsquares.jar
+kotlinc postprocess/src/PredLines.kt postprocess/test/GoldenLines.kt -include-runtime -d build/predlines.jar && java -jar build/predlines.jar
+kotlinc postprocess/src/PredSquares.kt postprocess/test/GoldenSquares.kt -include-runtime -d build/predsquares.jar && java -jar build/predsquares.jar
 ```
 
 ## Dữ liệu golden (`golden/`, không đưa lên git)

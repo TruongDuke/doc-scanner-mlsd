@@ -34,15 +34,16 @@ Phần kỹ thuật:
 ## Cấu trúc
 
 ```
-postprocess/PredLines.kt   pred_lines viết bằng Kotlin + phần kiểm tra golden
-postprocess/PredSquares.kt pred_squares viết bằng Kotlin + phần kiểm tra golden
+postprocess/src/           pred_lines, pred_squares viết bằng Kotlin (app Android dùng chung code này)
+postprocess/test/          golden test: so kết quả Kotlin với Python
+android/                   app Android (Jetpack Compose + LiteRT)
 tools/make_golden.py       sinh dữ liệu golden từ model chính thức (output thô + kết quả pred_lines của repo gốc)
 samples/                   ảnh thử
 golden/                    dữ liệu golden (sinh ra, không đưa lên git)
 third_party/mlsd-official  clone repo M-LSD chính thức (không đưa lên git)
 ```
 
-## Chạy golden test (mốc 1)
+## Chạy golden test (mốc 1, 2)
 
 ```bash
 # 1. Lấy repo M-LSD chính thức
@@ -53,9 +54,9 @@ pip install -r tools/requirements.txt
 python tools/make_golden.py
 
 # 3. Dịch và chạy bản Kotlin
-kotlinc postprocess/PredLines.kt -include-runtime -d build/predlines.jar
+kotlinc postprocess/src/PredLines.kt postprocess/test/GoldenLines.kt -include-runtime -d build/predlines.jar
 java -jar build/predlines.jar
-kotlinc postprocess/PredSquares.kt -include-runtime -d build/predsquares.jar
+kotlinc postprocess/src/PredSquares.kt postprocess/test/GoldenSquares.kt -include-runtime -d build/predsquares.jar
 java -jar build/predsquares.jar
 ```
 
