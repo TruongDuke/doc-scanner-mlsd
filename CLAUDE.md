@@ -14,23 +14,23 @@ App scan tài liệu chạy offline trên Android, dùng M-LSD tiny 512 (phát h
 - Phần phụ trợ (công cụ sinh dữ liệu test, đọc file / so sánh, Gradle, giao diện Android, CameraX, code vẽ): agent sửa thẳng vào repo, tự build (`./gradlew installDebug` trong `android/`) và chạy thử trên máy ảo (adb), rồi báo kết quả kèm giải thích từng phần để user review. Chưa commit khi user chưa xem, trừ khi user bảo làm luôn.
 - User chưa vững Kotlin/Android, giải thích đơn giản, từng bước nhỏ.
 
-## Tình trạng hiện tại: mốc 3
+## Tình trạng hiện tại: mốc 4
 
-Mốc 1, 2 xong, cả hai 6/6 PASS golden test.
-- `postprocess/src/`: chỉ thuật toán, `package mlsd`. `PredLines.kt` (`predLines`), `PredSquares.kt` (`predSquares`, mọi phép tính sau bước lọc dùng `Double` vì numpy là float64).
-- `postprocess/test/`: golden test (`main`, đọc `.bin`). Test squares so các tứ giác bằng điểm như một tập vì `np.argsort` không ổn định với mảng lớn.
-- App Android dùng thẳng `postprocess/src` (sourceSets trong `android/app/build.gradle.kts`), nên golden test kiểm tra đúng code mà app chạy.
+Mốc 1, 2, 3 xong.
+- `postprocess/src/` (`package mlsd`, app Android dùng chung qua sourceSets trong `android/app/build.gradle.kts`): `PredLines.kt`, `PredSquares.kt` (sau bước lọc dùng `Double` vì numpy là float64), `ResizeArea.kt` (chép lại `cv2.INTER_AREA` của OpenCV 4.10: nhánh thu nhỏ số nguyên lần, tỉ lệ lẻ, phóng to; khớp từng điểm ảnh).
+- `postprocess/test/`: golden test trên máy tính. Test squares so các tứ giác bằng điểm như một tập vì `np.argsort` không ổn định với mảng lớn.
+- App `android/` (Compose, package `com.truongduke.docscanner`, minSdk 26, LiteRT 1.0.1, model trong `app/src/main/assets/`): chọn ảnh (Photo Picker) -> `bitmapToRgb` -> `resizeArea` -> model (`MlsdModel.kt`) -> `predLines` / `predSquares` -> vẽ (`Drawing.kt`). Nút "Kiểm tra golden" (`GoldenCheck.kt`) chạy cả chuỗi trên ảnh mẫu: trên máy ảo khớp tuyệt đối 6/6 (giải mã JPEG, đầu vào, output model, đoạn, tứ giác).
+- Hạn chế đã biết: ảnh cạnh dài > 2048 bị `loadBitmap` thu nhỏ bằng `inSampleSize` nên sẽ khác Python chạy trên ảnh gốc; chưa đọc EXIF nên ảnh chụp dọc có thể bị xoay; `predSquares` chậm khi nhiều tứ giác (ảnh đầu đĩa: 2920 tứ giác), cần đo lại trên máy thật.
 
-Mốc 3 (app chọn ảnh, detect, vẽ), project ở `android/` (Compose, package `com.truongduke.docscanner`, minSdk 26, LiteRT 1.0.1, model trong `app/src/main/assets/`):
-- Xong bước 1-4: tạo project, chọn ảnh (Photo Picker), chạy model (`MlsdModel.kt`), gọi `predLines`/`predSquares` và in kết quả.
-- Còn bước 5: vẽ đoạn thẳng + tứ giác tốt nhất lên ảnh; bước 6: khớp golden trong app (thay bilinear bằng resize kiểu `cv2.INTER_AREA`, hiện app lệch nhẹ: `frame_1` tứ giác tốt nhất trùng 2/4 góc với golden).
-- Ảnh mẫu đã đẩy vào máy ảo `/sdcard/Download/` bằng adb. Ảnh chụp dọc có thể bị xoay vì chưa đọc EXIF.
+Mốc 4 (chưa bắt đầu): CameraX chạy liên tục, chụp, nắn thẳng, chỉnh góc, lưu ảnh.
 
 Chạy golden test từ thư mục gốc repo:
 ```bash
 kotlinc postprocess/src/PredLines.kt postprocess/test/GoldenLines.kt -include-runtime -d build/predlines.jar && java -jar build/predlines.jar
 kotlinc postprocess/src/PredSquares.kt postprocess/test/GoldenSquares.kt -include-runtime -d build/predsquares.jar && java -jar build/predsquares.jar
+kotlinc postprocess/src/ResizeArea.kt postprocess/test/GoldenResize.kt -include-runtime -d build/resize.jar && java -jar build/resize.jar   # cần thêm: python tools/make_resize_golden.py
 ```
+Kiểm tra trên máy ảo / điện thoại: cài app (`cd android && ./gradlew installDebug`), chạy `tools/push_golden.sh` (chép golden + ảnh mẫu vào `files/golden` của app bằng `run-as`, chỉ bản debug), rồi bấm "Kiểm tra golden". adb nằm ở `~/Library/Android/sdk/platform-tools/adb` (không có trong PATH).
 
 ## Dữ liệu golden (`golden/`, không đưa lên git)
 
@@ -43,7 +43,10 @@ Sinh bằng `tools/make_golden.py` từ model chính thức `third_party/mlsd-of
 - `{name}_squares.bin`: int32, (m, 4, 2), tứ giác xếp theo điểm giảm dần, góc theo thứ tự 0 trên-trái, 1 trên-phải, 2 dưới-phải, 3 dưới-trái
 - `{name}_sq_scores.bin`: float64, (m,)
 - `{name}_inter.bin`: int32, (k, 2), các góc hợp lệ
+- `{name}_rgb.bin`: uint8, (h, w, 3) RGB, ảnh sau khi cv2 giải mã
+- `{name}_input.bin`: uint8, (512, 512, 3), `cv2.resize(..., INTER_AREA)`, đầu vào model
 - `meta.json`: tên, h, w, số đoạn, số đoạn gộp / tứ giác / góc
+- `golden/resize/` (sinh bằng `tools/make_resize_golden.py`): ảnh nhiễu nhiều kích thước + kết quả `INTER_AREA`, để test `resizeArea`
 
 Tiêu chí PASS: cùng số đoạn, lệch tối đa < 0.01 px.
 

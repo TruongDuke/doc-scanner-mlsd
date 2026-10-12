@@ -25,8 +25,8 @@ Phần kỹ thuật:
 |---|---|---|
 | 1 | `pred_lines` bằng Kotlin, kiểm tra với kết quả Python (golden test) | Xong |
 | 2 | `pred_squares` bằng Kotlin, có golden test | Xong |
-| 3 | App Android: chọn ảnh có sẵn, detect box, vẽ lên | Đang làm |
-| 4 | Camera chạy liên tục, chụp, nắn thẳng, chỉnh góc, lưu ảnh | |
+| 3 | App Android: chọn ảnh có sẵn, detect box, vẽ lên | Xong |
+| 4 | Camera chạy liên tục, chụp, nắn thẳng, chỉnh góc, lưu ảnh | Đang làm |
 | 5 | Sửa quantization M-LSD để bản INT8 không bị hỏng | |
 | 6 | Chọn model / CPU / GPU, hiện số đo, chế độ benchmark | |
 | 7 | Viết lại quá trình: đã thử gì, sai ở đâu, sửa thế nào | |
@@ -34,10 +34,12 @@ Phần kỹ thuật:
 ## Cấu trúc
 
 ```
-postprocess/src/           pred_lines, pred_squares viết bằng Kotlin (app Android dùng chung code này)
+postprocess/src/           pred_lines, pred_squares, resize INTER_AREA viết bằng Kotlin (app Android dùng chung code này)
 postprocess/test/          golden test: so kết quả Kotlin với Python
 android/                   app Android (Jetpack Compose + LiteRT)
-tools/make_golden.py       sinh dữ liệu golden từ model chính thức (output thô + kết quả pred_lines của repo gốc)
+tools/make_golden.py       sinh dữ liệu golden từ model chính thức (output thô + kết quả pred_lines / pred_squares của repo gốc)
+tools/make_resize_golden.py  dữ liệu kiểm tra hàm resize
+tools/push_golden.sh       chép golden vào app trên điện thoại, cho nút "Kiểm tra golden"
 samples/                   ảnh thử
 golden/                    dữ liệu golden (sinh ra, không đưa lên git)
 third_party/mlsd-official  clone repo M-LSD chính thức (không đưa lên git)
@@ -58,6 +60,9 @@ kotlinc postprocess/src/PredLines.kt postprocess/test/GoldenLines.kt -include-ru
 java -jar build/predlines.jar
 kotlinc postprocess/src/PredSquares.kt postprocess/test/GoldenSquares.kt -include-runtime -d build/predsquares.jar
 java -jar build/predsquares.jar
+
+# 4. Kiểm tra trên điện thoại / máy ảo (app bản debug đã cài): rồi bấm "Kiểm tra golden" trong app
+tools/push_golden.sh
 ```
 
 ## Nguồn

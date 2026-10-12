@@ -38,6 +38,8 @@ for name, bgr in cases.items():
         lines = pred_lines(img, interpreter, inp, out, input_shape=[512, 512], score_thr=0.1, dist_thr=20.0)
     except IndexError:                       # hàm của repo crash khi không có đoạn nào
         lines = np.zeros((0, 4))
+    img.tofile(f"golden/{name}_rgb.bin")                                    # (h, w, 3) uint8 RGB, ảnh sau khi cv2 giải mã
+    cv2.resize(img, (512, 512), interpolation=cv2.INTER_AREA).tofile(f"golden/{name}_input.bin")  # (512, 512, 3) uint8, đầu vào model
     pts.astype("<i4").tofile(f"golden/{name}_pts.bin")          # (200, 2) int32, thứ tự (y, x)
     scores.astype("<f4").tofile(f"golden/{name}_scores.bin")    # (200,) float32
     vmap.astype("<f4").tofile(f"golden/{name}_vmap.bin")        # (256, 256, 4) float32

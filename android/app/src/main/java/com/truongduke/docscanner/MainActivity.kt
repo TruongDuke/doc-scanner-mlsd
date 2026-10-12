@@ -13,6 +13,14 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -65,6 +73,9 @@ fun ScannerScreen(modifier: Modifier = Modifier) {
     var info by remember { mutableStateOf("") }
     // Ảnh đã vẽ kết quả lên (null = chưa có, hiện ảnh gốc)
     var annotated by remember { mutableStateOf<Bitmap?>(null) }
+    // Kết quả nút "Kiểm tra golden" (null = đang ở chế độ xem ảnh)
+    var goldenReport by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
 
     // Mỗi khi đổi ảnh: chạy model ở luồng nền (không làm đơ giao diện), xong thì cập nhật info
     LaunchedEffect(bitmap) {
@@ -82,7 +93,7 @@ fun ScannerScreen(modifier: Modifier = Modifier) {
             val t2 = System.nanoTime()
 
             val best = sq.squares.firstOrNull()?.toList()?.chunked(2)?.joinToString(" ") { "(${it[0]}, ${it[1]})" } ?: "không có"
-            val text = "Model: ${out.timeMs} ms\n" +
+            val text = "Tiền xử lý: ${out.prepMs} ms | Model: ${out.timeMs} ms\n" +
                 "predLines: ${lines.size} đoạn, ${(t1 - t0) / 1_000_000} ms\n" +
                 "predSquares: ${sq.segments.size} đoạn gộp, ${sq.interPoints.size} góc, " +
                 "${sq.squares.size} tứ giác, ${(t2 - t1) / 1_000_000} ms\n" +
@@ -97,20 +108,40 @@ fun ScannerScreen(modifier: Modifier = Modifier) {
 
     // Mở trình chọn ảnh của hệ thống; chọn xong thì đọc ảnh vào bitmap
     val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) bitmap = loadBitmap(context, uri)
+        if (uri != null) {
+            goldenReport = null
+            bitmap = loadBitmap(context, uri)
+        }
     }
 
-    Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
-        Button(onClick = {
-            pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-        }) {
-            Text("Chọn ảnh")
+    Column(modifier = modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
+        Row {
+            Button(onClick = {
+                pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+            }) {
+                Text("Chọn ảnh")
+            }
+            Spacer(Modifier.width(8.dp))
+            // So kết quả app với bản Python trên các ảnh mẫu (xem GoldenCheck.kt)
+            Button(onClick = {
+                goldenReport = "Đang kiểm tra..."
+                scope.launch {
+                    val report = withContext(Dispatchers.Default) { runGoldenCheck(context, model) }
+                    goldenReport = report
+                    Log.d("MLSD", report)
+                }
+            }) {
+                Text("Kiểm tra golden")
+            }
         }
 
         Spacer(Modifier.height(16.dp))
 
         val bmp = bitmap
-        if (bmp == null) {
+        val report = goldenReport
+        if (report != null) {
+            Text(report, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+        } else if (bmp == null) {
             Text("Chưa chọn ảnh")
         } else {
             Text("Kích thước: ${bmp.width} x ${bmp.height}")
