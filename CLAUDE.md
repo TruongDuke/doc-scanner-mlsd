@@ -15,17 +15,18 @@ App scan tài liệu chạy offline trên Android, dùng M-LSD tiny 512 (phát h
 - Đưa code để user tự dán và tự chạy, kèm giải thích từng phần. Không tự chạy thí nghiệm thay user trừ khi user yêu cầu rõ ("chạy luôn đi").
 - User chưa vững Kotlin/Android, giải thích đơn giản, từng bước nhỏ.
 
-## Tình trạng hiện tại: mốc 2
+## Tình trạng hiện tại: mốc 3
 
-Mốc 1 xong: `predLines` trong `postprocess/PredLines.kt` đạt **6/6 PASS** golden test (lệch max 0.0001 px). Lần này agent viết thân hàm theo yêu cầu rõ của user, user review lại.
+Mốc 1, 2 xong, cả hai 6/6 PASS golden test. Hai mốc này agent viết theo yêu cầu rõ của user, user review lại:
+- `postprocess/PredLines.kt`: `predLines`.
+- `postprocess/PredSquares.kt`: `predSquares`, mọi phép tính sau bước lọc dùng `Double` (numpy là float64). Test so các tứ giác bằng điểm như một tập vì `np.argsort` không ổn định với mảng lớn.
 
-Mốc 2: viết `predSquares` (port `pred_squares`, `third_party/mlsd-official/utils.py` từ dòng 50). Việc trước tiên: mở rộng `tools/make_golden.py` để sinh golden cho `pred_squares`. Chưa chốt ai viết `predSquares` (mặc định vẫn theo quy tắc: user tự viết, agent đưa khung), hỏi user trước khi bắt đầu.
-
-Lưu ý: `pred_squares` KHÔNG gọi `pred_lines`. Nó lặp lại bước lọc nhưng với score **0.06** (dist vẫn 20), giữ toạ độ đoạn trên **lưới 256** (chưa đổi về ảnh gốc), và lưu thêm `junc_list` (các trung điểm (x, y)). Nên `predLines` hiện tại chưa dùng lại nguyên được, cần tách hàm hoặc thêm tham số.
+Mốc 3: app Android chọn ảnh có sẵn, chạy model + `predLines`/`predSquares`, vẽ kết quả. Khi đưa vào app phải tách phần `main`/đọc golden ra khỏi hai file (trùng tên `main` khi dịch chung). Agent được viết phần app (Gradle, UI, vẽ), làm từng bước nhỏ để user tự dán và chạy.
 
 Chạy golden test từ thư mục gốc repo:
 ```bash
 kotlinc postprocess/PredLines.kt -include-runtime -d build/predlines.jar && java -jar build/predlines.jar
+kotlinc postprocess/PredSquares.kt -include-runtime -d build/predsquares.jar && java -jar build/predsquares.jar
 ```
 
 ## Dữ liệu golden (`golden/`, không đưa lên git)
@@ -35,7 +36,11 @@ Sinh bằng `tools/make_golden.py` từ model chính thức `third_party/mlsd-of
 - `{name}_scores.bin`: float32, (200,)
 - `{name}_vmap.bin`: float32, (256, 256, 4) làm phẳng: `vmap[(y * 256 + x) * 4 + c]`, c = (dx_start, dy_start, dx_end, dy_end)
 - `{name}_lines.bin`: float32, (n, 4) = (x1, y1, x2, y2) trên ảnh gốc, kết quả mong đợi
-- `meta.json`: tên, h, w, số đoạn
+- `{name}_sq_segments.bin`: float64, (n, 4), đoạn đã gộp của `pred_squares` trên ảnh gốc
+- `{name}_squares.bin`: int32, (m, 4, 2), tứ giác xếp theo điểm giảm dần, góc theo thứ tự 0 trên-trái, 1 trên-phải, 2 dưới-phải, 3 dưới-trái
+- `{name}_sq_scores.bin`: float64, (m,)
+- `{name}_inter.bin`: int32, (k, 2), các góc hợp lệ
+- `meta.json`: tên, h, w, số đoạn, số đoạn gộp / tứ giác / góc
 
 Tiêu chí PASS: cùng số đoạn, lệch tối đa < 0.01 px.
 

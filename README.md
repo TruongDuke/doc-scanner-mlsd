@@ -24,8 +24,8 @@ Phần kỹ thuật:
 | Mốc | Việc | Trạng thái |
 |---|---|---|
 | 1 | `pred_lines` bằng Kotlin, kiểm tra với kết quả Python (golden test) | Xong |
-| 2 | `pred_squares` bằng Kotlin, có golden test | Đang làm |
-| 3 | App Android: chọn ảnh có sẵn, detect box, vẽ lên | |
+| 2 | `pred_squares` bằng Kotlin, có golden test | Xong |
+| 3 | App Android: chọn ảnh có sẵn, detect box, vẽ lên | Đang làm |
 | 4 | Camera chạy liên tục, chụp, nắn thẳng, chỉnh góc, lưu ảnh | |
 | 5 | Sửa quantization M-LSD để bản INT8 không bị hỏng | |
 | 6 | Chọn model / CPU / GPU, hiện số đo, chế độ benchmark | |
@@ -35,6 +35,7 @@ Phần kỹ thuật:
 
 ```
 postprocess/PredLines.kt   pred_lines viết bằng Kotlin + phần kiểm tra golden
+postprocess/PredSquares.kt pred_squares viết bằng Kotlin + phần kiểm tra golden
 tools/make_golden.py       sinh dữ liệu golden từ model chính thức (output thô + kết quả pred_lines của repo gốc)
 samples/                   ảnh thử
 golden/                    dữ liệu golden (sinh ra, không đưa lên git)
@@ -54,6 +55,8 @@ python tools/make_golden.py
 # 3. Dịch và chạy bản Kotlin
 kotlinc postprocess/PredLines.kt -include-runtime -d build/predlines.jar
 java -jar build/predlines.jar
+kotlinc postprocess/PredSquares.kt -include-runtime -d build/predsquares.jar
+java -jar build/predsquares.jar
 ```
 
 ## Nguồn

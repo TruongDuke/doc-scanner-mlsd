@@ -7,7 +7,7 @@ import cv2
 import tensorflow as tf
 
 sys.path.insert(0, "third_party/mlsd-official")
-from utils import pred_lines
+from utils import pred_lines, pred_squares
 
 MODEL = "third_party/mlsd-official/tflite_models/M-LSD_512_tiny_fp32.tflite"
 interpreter = tf.lite.Interpreter(model_path=MODEL)
@@ -42,9 +42,22 @@ for name, bgr in cases.items():
     scores.astype("<f4").tofile(f"golden/{name}_scores.bin")    # (200,) float32
     vmap.astype("<f4").tofile(f"golden/{name}_vmap.bin")        # (256, 256, 4) float32
     np.asarray(lines, dtype="<f4").tofile(f"golden/{name}_lines.bin")  # (n, 4) float32
+
+    # pred_squares (mốc 2), tham số mặc định của repo gốc
+    try:
+        sq_segments, squares, sq_scores, inter = pred_squares(img, interpreter, inp, out, input_shape=[512, 512])
+    except IndexError:                       # crash khi không có đoạn nào qua được bước lọc
+        sq_segments, squares, sq_scores, inter = [], [], [], []
+    np.asarray(sq_segments, dtype="<f8").reshape(-1, 4).tofile(f"golden/{name}_sq_segments.bin")  # (n, 4) float64, đoạn đã gộp
+    np.asarray(squares, dtype="<i4").reshape(-1, 4, 2).tofile(f"golden/{name}_squares.bin")      # (m, 4, 2) int32, xếp theo điểm giảm dần
+    np.asarray(sq_scores, dtype="<f8").reshape(-1).tofile(f"golden/{name}_sq_scores.bin")       # (m,) float64
+    np.asarray(inter, dtype="<i4").reshape(-1, 2).tofile(f"golden/{name}_inter.bin")            # (k, 2) int32, các góc tìm được
+
     h, w = img.shape[:2]
-    meta.append({"name": name, "h": h, "w": w, "n_lines": len(lines)})
-    print(f"{name:28s} anh {w}x{h}  ->  {len(lines)} doan thang")
+    meta.append({"name": name, "h": h, "w": w, "n_lines": len(lines),
+                 "n_sq_segments": len(sq_segments), "n_squares": len(squares), "n_inter": len(inter)})
+    print(f"{name:28s} anh {w}x{h}  ->  {len(lines)} doan thang | squares: {len(sq_segments)} doan gop, "
+          f"{len(inter)} goc, {len(squares)} tu giac")
 
 with open("golden/meta.json", "w") as f:
     json.dump(meta, f, indent=1)
