@@ -23,8 +23,8 @@ Phần kỹ thuật:
 
 | Mốc | Việc | Trạng thái |
 |---|---|---|
-| 1 | `pred_lines` bằng Kotlin, kiểm tra với kết quả Python (golden test) | Đang làm |
-| 2 | `pred_squares` bằng Kotlin, có golden test | |
+| 1 | `pred_lines` bằng Kotlin, kiểm tra với kết quả Python (golden test) | Xong |
+| 2 | `pred_squares` bằng Kotlin, có golden test | Đang làm |
 | 3 | App Android: chọn ảnh có sẵn, detect box, vẽ lên | |
 | 4 | Camera chạy liên tục, chụp, nắn thẳng, chỉnh góc, lưu ảnh | |
 | 5 | Sửa quantization M-LSD để bản INT8 không bị hỏng | |

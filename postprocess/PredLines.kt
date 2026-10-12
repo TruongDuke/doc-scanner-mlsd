@@ -2,6 +2,7 @@ import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.abs
+import kotlin.math.sqrt
 
 // Một đoạn thẳng: 2 đầu mút (x1, y1) và (x2, y2), toạ độ trên ảnh gốc
 data class Line(val x1: Float, val y1: Float, val x2: Float, val y2: Float)
@@ -26,13 +27,38 @@ fun predLines(
 ): List<Line> {
     val lines = mutableListOf<Line>()
 
-    // TODO: tự viết phần này theo ALGORITHM.md
-    // Gợi ý thứ tự:
-    //   1. Với mỗi điểm i trong 200 điểm: lấy y, x từ pts, score từ scores
-    //   2. Đọc 4 giá trị độ dời của vmap tại (y, x)
-    //   3. Tính độ dài đoạn, bỏ nếu score <= scoreThr hoặc độ dài <= distThr
-    //   4. Tính 2 đầu mút trên lưới 256, rồi đổi về ảnh gốc (nhân 2, nhân tỉ lệ)
-    //   5. Thêm vào lines
+    // Tỉ lệ từ ảnh 512x512 (đầu vào model) về ảnh gốc
+    val wRatio = imgW / 512f
+    val hRatio = imgH / 512f
+
+    for (i in 0 until 200) {
+        // 1. Lấy toạ độ điểm thứ i. pts lưu phẳng [y0, x0, y1, x1, ...]
+        val y = pts[i * 2]
+        val x = pts[i * 2 + 1]
+        val score = scores[i]
+
+        // 2. Đọc 4 giá trị độ dời của vmap tại ô (y, x)
+        val base = (y * 256 + x) * 4
+        val dxStart = vmap[base + 0]
+        val dyStart = vmap[base + 1]
+        val dxEnd = vmap[base + 2]
+        val dyEnd = vmap[base + 3]
+
+        // 3. Độ dài đoạn = khoảng cách giữa 2 độ dời (giống dist_map bên Python)
+        val dist = sqrt((dxStart - dxEnd) * (dxStart - dxEnd) + (dyStart - dyEnd) * (dyStart - dyEnd))
+
+        // 4. Lọc: Python dùng dấu > cho cả hai điều kiện
+        if (score > scoreThr && dist > distThr) {
+            // 5. Hai đầu mút trên lưới 256 = center + độ dời
+            val x1 = x + dxStart
+            val y1 = y + dyStart
+            val x2 = x + dxEnd
+            val y2 = y + dyEnd
+
+            // 6. Đổi về ảnh gốc: nhân 2 (256 → 512) rồi nhân tỉ lệ, đúng thứ tự như Python
+            lines.add(Line(2 * x1 * wRatio, 2 * y1 * hRatio, 2 * x2 * wRatio, 2 * y2 * hRatio))
+        }
+    }
 
     return lines
 }

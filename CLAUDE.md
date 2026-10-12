@@ -15,11 +15,13 @@ App scan tài liệu chạy offline trên Android, dùng M-LSD tiny 512 (phát h
 - Đưa code để user tự dán và tự chạy, kèm giải thích từng phần. Không tự chạy thí nghiệm thay user trừ khi user yêu cầu rõ ("chạy luôn đi").
 - User chưa vững Kotlin/Android, giải thích đơn giản, từng bước nhỏ.
 
-## Tình trạng hiện tại: mốc 1
+## Tình trạng hiện tại: mốc 2
 
-Mục tiêu: viết `predLines` trong `postprocess/PredLines.kt` (phần `TODO`), đạt **6/6 PASS** golden test. Hiện tại 1/6 PASS (hàm chưa có code, chỉ ảnh trơn `blank` khớp).
+Mốc 1 xong: `predLines` trong `postprocess/PredLines.kt` đạt **6/6 PASS** golden test (lệch max 0.0001 px). Lần này agent viết thân hàm theo yêu cầu rõ của user, user review lại.
 
-Agent trước đã đưa user khung có chỗ trống `???` cho thân hàm (vòng lặp 200 điểm, đọc pts / vmap, lọc score và độ dài, đổi toạ độ). User đang điền.
+Mốc 2: viết `predSquares` (port `pred_squares`, `third_party/mlsd-official/utils.py` từ dòng 50). Việc trước tiên: mở rộng `tools/make_golden.py` để sinh golden cho `pred_squares`. Chưa chốt ai viết `predSquares` (mặc định vẫn theo quy tắc: user tự viết, agent đưa khung), hỏi user trước khi bắt đầu.
+
+Lưu ý: `pred_squares` KHÔNG gọi `pred_lines`. Nó lặp lại bước lọc nhưng với score **0.06** (dist vẫn 20), giữ toạ độ đoạn trên **lưới 256** (chưa đổi về ảnh gốc), và lưu thêm `junc_list` (các trung điểm (x, y)). Nên `predLines` hiện tại chưa dùng lại nguyên được, cần tách hàm hoặc thêm tham số.
 
 Chạy golden test từ thư mục gốc repo:
 ```bash
