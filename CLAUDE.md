@@ -77,4 +77,11 @@ Tiêu chí PASS: cùng số đoạn, lệch tối đa < 0.01 px.
 
 ## Bối cảnh quantization (cho mốc 5)
 
+**Bước 1 xong (13/10), `tools/sim_quant_head.py`**: mô phỏng int8 chỉ ở output head (tensor 156 `Decoder/resize`, 256x256x16; kênh 7 = center -> sigmoid -> maxpool 3x3 -> top-k 200; kênh 8-11 = vmap; 11 kênh còn lại không dùng), các layer khác FP32, đo trên 120 khung SmartDoc:
+- 1 scale chung 16 kênh, min/max (như TFLite): IoU 0.000, giữ 1.8% đoạn -> tái hiện đúng lỗi INT8.
+- Nguyên nhân thật gồm 2 phần: (1) dùng chung scale, (2) **ngoại lai**: vmap ở chỗ không có đoạn thẳng lên tới ±1100 (tại điểm center chỉ ±111), logit center xuống -47 (điểm được giữ chỉ từ -2.75). Min/max lấy ngoại lai nên scale khoảng 8.5 ô lưới / mức.
+- Tách center / vmap **và** cắt khoảng (center -8..max, vmap ±128): giữ 99.6% đoạn, IoU 0.776 (FP32 0.786), đúng 56.7% (bằng FP32). Chỉ cắt khoảng mà vẫn chung scale: IoU 0.691. Chỉ per-channel min/max: 0.705.
+- Hướng sửa model thật: tách head thành 2 output + chặn khoảng giá trị (clip) trước khi quantize, hoặc giữ head FP32.
+
+
 Từ thí nghiệm ở repo Quantization (`5-mlsd/BAO_CAO.md`): quantize INT8 M-LSD nhanh hơn khoảng 3.6 lần nhưng chỉ giữ được 37-60% đoạn thẳng. Nguyên nhân chính: 9 kênh output dùng chung một scale (kênh displacement khoảng ±131 lấn kênh center khoảng -17..3). Activation INT16 không giúp và chậm hơn 20 lần (không có XNNPACK). Hướng sửa dự kiến: giữ layer cuối FP32, tách output head, calibration bằng ảnh tài liệu.
