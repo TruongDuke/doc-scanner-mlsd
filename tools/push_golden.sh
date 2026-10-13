@@ -2,14 +2,26 @@
 # Chép dữ liệu golden + ảnh mẫu vào bộ nhớ riêng của app (bản debug) trên điện thoại / máy ảo đang kết nối,
 # cho nút "Kiểm tra golden" trong app. Đích: /data/data/com.truongduke.docscanner/files/golden/
 # Chạy từ thư mục gốc repo, sau khi đã cài app ít nhất 1 lần: tools/push_golden.sh
+# Nhiều thiết bị cùng cắm: chọn máy bằng biến ANDROID_SERIAL (xem tên bằng "adb devices"), ví dụ:
+#   ANDROID_SERIAL=AIE00201260 tools/push_golden.sh
 set -e
 ADB=$(command -v adb || echo ~/Library/Android/sdk/platform-tools/adb)
 PKG=com.truongduke.docscanner
-"$ADB" shell run-as $PKG mkdir -p files/golden
-n=0
-for f in golden/meta.json golden/*.bin $(find samples -maxdepth 1 -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \)); do
-    # run-as chạy lệnh với quyền của app, nên ghi được vào bộ nhớ riêng của app
-    "$ADB" exec-in run-as $PKG sh -c "cat > files/golden/$(basename "$f")" < "$f"
-    n=$((n + 1))
+TMP=/data/local/tmp/golden_push
+
+FILES="golden/meta.json $(ls golden/*.bin) $(find samples -maxdepth 1 -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \))"
+
+# 1. Đẩy vào thư mục tạm (adb ghi được), 2. app tự chép sang bộ nhớ riêng bằng run-as (chạy với quyền của app)
+"$ADB" shell "rm -rf $TMP && mkdir -p $TMP"
+"$ADB" push $FILES "$TMP/" 2>&1 | tail -1
+"$ADB" shell "run-as $PKG sh -c 'rm -rf files/golden && mkdir -p files/golden && cp $TMP/* files/golden/'"
+"$ADB" shell "rm -rf $TMP"
+
+# 3. Kiểm tra kích thước từng file trên máy khớp với file trên Mac
+bad=0
+for f in $FILES; do
+    want=$(wc -c < "$f" | tr -d ' ')
+    got=$("$ADB" shell "run-as $PKG stat -c %s files/golden/$(basename "$f")" 2>/dev/null | tr -d '\r')
+    if [ "$want" != "$got" ]; then echo "SAI: $(basename "$f") tren may $got byte, tren Mac $want byte"; bad=1; fi
 done
-echo "Da chep $n file vao files/golden cua app"
+[ $bad = 0 ] && echo "Xong: $(echo $FILES | wc -w | tr -d ' ') file, kich thuoc khop het"

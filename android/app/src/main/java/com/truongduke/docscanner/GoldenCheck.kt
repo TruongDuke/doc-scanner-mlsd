@@ -14,10 +14,14 @@ import mlsd.predSquares
 // Dữ liệu golden + ảnh mẫu được chép vào bộ nhớ riêng của app bằng tools/push_golden.sh, nằm ở
 //   /data/data/com.truongduke.docscanner/files/golden/
 //
-// Với mỗi ảnh mẫu kiểm tra 2 việc:
+// Với mỗi ảnh mẫu kiểm tra 3 việc:
 //   (A) đưa vào model đúng ảnh 512x512 mà cv2 tạo ra ({name}_input.bin)
 //       -> kiểm tra riêng model + predLines / predSquares trên máy
-//   (B) chạy cả chuỗi như khi người dùng chọn ảnh: giải mã JPEG -> resizeArea -> model -> post-processing
+//   (B) từ ảnh RGB do cv2 giải mã ({name}_rgb.bin): resizeArea -> model -> post-processing
+//       -> kiểm tra thêm resizeArea trên máy; đo thời gian từng bước
+//   (C) từ file JPEG, giải mã bằng Android (như khi người dùng chọn ảnh)
+//       -> chỉ để tham khảo: bộ giải mã JPEG mỗi máy có thể khác cv2 một chút (vd. chip MediaTek),
+//          nên (C) không tính PASS/FAIL, chỉ báo mức lệch
 
 private fun buf(f: File) = ByteBuffer.wrap(f.readBytes()).order(ByteOrder.LITTLE_ENDIAN)
 private fun f32(f: File) = buf(f).let { b -> FloatArray(b.remaining() / 4) { b.float } }
@@ -35,6 +39,8 @@ fun runGoldenCheck(context: Context, model: MlsdModel): String {
     var passA = 0
     var passB = 0
     var total = 0
+    var sameC = 0
+    var totalC = 0
     val metaRe = Regex("\"name\": \"([^\"]+)\",\\s*\"h\": (\\d+),\\s*\"w\": (\\d+)")
     for (m in metaRe.findAll(metaFile.readText())) {
         val (name, hs, ws) = m.destructured
@@ -80,36 +86,39 @@ fun runGoldenCheck(context: Context, model: MlsdModel): String {
         sb.append("  (A) ${if (okA) "PASS" else "FAIL"}  pts trùng $ptsSame/200, lệch score %.1e, lệch vmap %.1e\n".format(scoreErr, vmapErr))
         sb.append("      $postA\n")
 
-        // ----- (B) cả chuỗi từ file ảnh -----
+        // ----- (B) từ ảnh RGB của cv2: resizeArea + model + post-processing, kèm thời gian -----
+        val rgbPy = g("rgb").readBytes()
+        val outB = model.runRgb(rgbPy, w, h)
+        val tPost0 = System.nanoTime()
+        val (okB, postB) = comparePost(outB.pts, outB.scores, outB.vmap)
+        val postMs = (System.nanoTime() - tPost0) / 1_000_000
+        if (okB) passB++
+        sb.append("  (B) ${if (okB) "PASS" else "FAIL"}  $postB\n")
+        sb.append("      thời gian: tiền xử lý ${outB.prepMs} ms, model ${outB.timeMs} ms, post-processing $postMs ms\n")
+
+        // ----- (C) từ file JPEG, giải mã bằng Android (tham khảo) -----
         val imgFile = dir.listFiles()?.firstOrNull {
             it.nameWithoutExtension == name && it.extension.lowercase() in listOf("jpg", "jpeg", "png")
-        }
-        if (imgFile == null) {
-            // ảnh trơn "blank" do Python tự tạo, không có file ảnh: dùng thẳng {name}_rgb.bin
-            val outB = model.runRgb(g("rgb").readBytes(), w, h)
-            val (okB, postB) = comparePost(outB.pts, outB.scores, outB.vmap)
-            if (okB) passB++
-            sb.append("  (B) ${if (okB) "PASS" else "FAIL"}  (không có file ảnh, dùng ảnh RGB của Python)\n      $postB\n")
-            continue
-        }
+        } ?: continue   // ảnh trơn "blank" do Python tự tạo, không có file ảnh
         val bmp = BitmapFactory.decodeFile(imgFile.path)
-        // So ảnh Android giải mã với ảnh cv2 giải mã
         val rgb = bitmapToRgb(bmp)
-        val expRgb = g("rgb").readBytes()
         var nDiff = 0
         var maxDiff = 0
-        if (rgb.size == expRgb.size) for (k in rgb.indices) {
-            val d = abs((rgb[k].toInt() and 0xFF) - (expRgb[k].toInt() and 0xFF))
+        if (rgb.size == rgbPy.size) for (k in rgb.indices) {
+            val d = abs((rgb[k].toInt() and 0xFF) - (rgbPy[k].toInt() and 0xFF))
             if (d != 0) nDiff++
             maxDiff = max(maxDiff, d)
         }
-        val outB = model.runRgb(rgb, bmp.width, bmp.height)
-        val (okB, postB) = comparePost(outB.pts, outB.scores, outB.vmap)
-        if (okB) passB++
-        val decodeText = if (rgb.size != expRgb.size) "kích thước ảnh khác Python!"
+        val outC = model.runRgb(rgb, bmp.width, bmp.height)
+        val (okC, postC) = comparePost(outC.pts, outC.scores, outC.vmap)
+        if (okC) sameC++
+        totalC++
+        val decodeText = if (rgb.size != rgbPy.size) "kích thước ảnh khác Python!"
         else "giải mã lệch $nDiff/${rgb.size} giá trị (max $maxDiff)"
-        sb.append("  (B) ${if (okB) "PASS" else "FAIL"}  $decodeText\n      $postB\n")
+        sb.append("  (C) ${if (okC) "giống" else "khác"}  $decodeText\n      $postC\n")
     }
-    sb.insert(0, "(A) model + post-processing: $passA/$total PASS\n(B) cả chuỗi từ file ảnh:     $passB/$total PASS\n\n")
+    sb.insert(0, "(A) model + post-processing:     $passA/$total PASS\n" +
+        "(B) resize + model + post:        $passB/$total PASS\n" +
+        "(C) từ JPEG (giải mã của máy):    $sameC/$totalC giống Python (tham khảo)\n\n")
     return sb.toString()
 }

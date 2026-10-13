@@ -22,6 +22,8 @@ Mốc 1, 2, 3 xong.
 - App `android/` (Compose, package `com.truongduke.docscanner`, minSdk 26, LiteRT 1.0.1, model trong `app/src/main/assets/`): chọn ảnh (Photo Picker) -> `bitmapToRgb` -> `resizeArea` -> model (`MlsdModel.kt`) -> `predLines` / `predSquares` -> vẽ (`Drawing.kt`). Nút "Kiểm tra golden" (`GoldenCheck.kt`) chạy cả chuỗi trên ảnh mẫu: trên máy ảo khớp tuyệt đối 6/6 (giải mã JPEG, đầu vào, output model, đoạn, tứ giác).
 - Hạn chế đã biết: ảnh cạnh dài > 2048 bị `loadBitmap` thu nhỏ bằng `inSampleSize` nên sẽ khác Python chạy trên ảnh gốc; chưa đọc EXIF nên ảnh chụp dọc có thể bị xoay; `predSquares` chậm khi nhiều tứ giác (ảnh đầu đĩa: 2920 tứ giác), cần đo lại trên máy thật.
 
+Điện thoại thật của user: **Vsmart Bee 3** (MediaTek MT6739, 4x Cortex-A53, **32-bit armeabi-v7a**, RAM 2 GB, Android 9, cổng micro-USB; serial adb `AIE00201260`, cần `ANDROID_SERIAL` khi máy ảo cũng chạy). Trên máy này Logcat không hiện `Log.d` của app, đọc kết quả qua màn hình (`uiautomator dump`). Kết quả "Kiểm tra golden" (13/10): (A) 6/6, (B) 6/6 PASS (model lệch score ~1e-6, vmap ~1e-2 nhưng đoạn / tứ giác khớp hết); (C) giải mã JPEG của máy khác cv2 (lệch tới 32 mức) nên kết quả từ file JPEG khác Python, chỉ để tham khảo. Thời gian FP32: model ~2.05 s, tiền xử lý ảnh 1920x1440 ~1.8 s (cần tối ưu `bitmapToRgb` + `resizeArea`), post-processing 35 ms (ảnh nhiều tứ giác 372 ms).
+
 Mốc 4 (chưa bắt đầu): CameraX chạy liên tục, chụp, nắn thẳng, chỉnh góc, lưu ảnh.
 
 Chạy golden test từ thư mục gốc repo:
