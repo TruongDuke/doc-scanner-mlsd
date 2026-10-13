@@ -67,6 +67,14 @@ Tiêu chí PASS: cùng số đoạn, lệch tối đa < 0.01 px.
 - Đổi toạ độ: nhân 2 (lưới 256 lên 512), rồi nhân `imgW / 512f` cho x, `imgH / 512f` cho y. Chú ý chia số thực trong Kotlin.
 - `pred_squares` (mốc 2): numpy cho phép chỉ số âm (tự quay vòng) ở bước gộp đoạn, Kotlin sẽ lỗi, phải kiểm tra biên; đoạn song song làm `det` gần 0; bước ghép tứ giác có 4 vòng lặp lồng nhau; khối chấm điểm dùng `try/except: pass` nuốt lỗi.
 
+## Dữ liệu tài liệu thật (cho đánh giá chất lượng và calibration INT8)
+
+- `data/smartdoc15/` (không đưa lên git): SmartDoc 2015 Challenge 1, bản v2.0.0 từ github.com/jchazalon/smartdoc15-ch1-dataset, giấy phép CC BY 4.0 (trích dẫn bài ICDAR 2015 SmartDoc của Burie et al.). 24.889 khung hình 1920x1080 cắt từ video, 30 tài liệu (6 loại: datasheet, letter, magazine, paper, patent, tax) trên 5 nền (background05 có đồ vật lộn xộn). `metadata.csv.gz`: đường dẫn ảnh + 4 góc đáp án `tl, bl, br, tr` (x, y). Khung hình liền nhau gần giống hệt nhau: chia calibration / đánh giá **theo tài liệu**, không chia ngẫu nhiên theo khung hình.
+- Chia tập: `tools/make_doc_split.py` -> `data/calib.txt` (360 khung, 18 tài liệu, cho calibration INT8) và `data/eval.csv` (120 khung, 12 tài liệu khác, có đáp án).
+- Đo chất lượng: `tools/eval_quads.py [--model x.tflite]` (model + `pred_squares` repo gốc, tứ giác tốt nhất so với đáp án: IoU, % khung IoU>=0.9, sai số góc px). Mức trần FP32 (13/10): IoU TB 0.786, đúng 56.7%, sai số góc trung vị 14 px; nền 1-4: IoU 0.85-0.89, đúng 62-79%; nền 5 (lộn xộn): IoU 0.47, đúng 8%, thường chọn nhầm quyển tạp chí bìa xanh. Lỗi hay gặp ở nền trắng: chọn mép khối chữ bên trong thay cho mép giấy.
+- `samples/docs/`: ảnh tài liệu user tự chụp (to, có EXIF xoay), không có đáp án.
+- Dự phòng nếu cần đa dạng hơn: Mendeley "A New Image Dataset for Document Corner Localization" (1.111 ảnh, CC BY 4.0).
+
 ## Bối cảnh quantization (cho mốc 5)
 
 Từ thí nghiệm ở repo Quantization (`5-mlsd/BAO_CAO.md`): quantize INT8 M-LSD nhanh hơn khoảng 3.6 lần nhưng chỉ giữ được 37-60% đoạn thẳng. Nguyên nhân chính: 9 kênh output dùng chung một scale (kênh displacement khoảng ±131 lấn kênh center khoảng -17..3). Activation INT16 không giúp và chậm hơn 20 lần (không có XNNPACK). Hướng sửa dự kiến: giữ layer cuối FP32, tách output head, calibration bằng ảnh tài liệu.

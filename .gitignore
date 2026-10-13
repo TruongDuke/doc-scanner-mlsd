@@ -9,3 +9,4 @@ samples/*
 !samples/README.md
 !android/gradle/wrapper/gradle-wrapper.jar
 android/.idea/
+data/
