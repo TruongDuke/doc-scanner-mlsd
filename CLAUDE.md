@@ -83,5 +83,13 @@ Tiêu chí PASS: cùng số đoạn, lệch tối đa < 0.01 px.
 - Tách center / vmap **và** cắt khoảng (center -8..max, vmap ±128): giữ 99.6% đoạn, IoU 0.776 (FP32 0.786), đúng 56.7% (bằng FP32). Chỉ cắt khoảng mà vẫn chung scale: IoU 0.691. Chỉ per-channel min/max: 0.705.
 - Hướng sửa model thật: tách head thành 2 output + chặn khoảng giá trị (clip) trước khi quantize, hoặc giữ head FP32.
 
+**Bước 2-3 (13/10), model thật**: không có mã nguồn bản NAVER (chỉ có .tflite) nên dùng bản PyTorch lhwcv (`third_party/mlsd-pytorch` là symlink tới `/Users/duc/Neural Network Quantization/5-mlsd/mlsd-pytorch`), convert với vào/ra giống hệt NAVER (`tools/export_lhwcv.py`). Môi trường: `/Users/duc/Neural Network Quantization/3-deploy/.venv` (torch, litert_torch 0.9.4, ai_edge_quantizer 0.9.0, ai_edge_litert; không có TF). Đo: `tools/run_raw.py <model>` (runtime mới, lưu output thô `data/raw/*.npz`, tự đổi số vào/ra int8) rồi `tools/eval_quads.py --raw ...` (môi trường TF 2.15). Model ở `data/models/` (không lên git), tạo bằng `tools/quantize_lhwcv.py` (calibration 360 khung SmartDoc).
+Kết quả trên 120 khung SmartDoc (IoU TB / đúng IoU>=0.9 / Mac 4 thread):
+- NAVER FP32: 0.786 / 56.7% / 34 ms. lhwcv FP32: 0.802 / 55.0% / 33 ms (tách head, cắt ngoại lai không đổi FP32).
+- V1 INT8 mặc định: 0.395 / 36.7% (66/120 khung không tìm được tứ giác) / 10 ms.
+- V2 + tách head: 0.734 / 44.2%. V3 + cắt ngoại lai: 0.751 / 51.7% / 9.7 ms. V4 + giữ 3 layer nhạy float: 0.744. V5 + giữ head float: 0.755 / 51.7% / 10.5 ms.
+- Trên tập này giữ 3 layer nhạy ở float gần như không giúp (khác thí nghiệm 7-mlsd-lowbit đo theo % đoạn thẳng). Phần mất còn lại chủ yếu ở nền 5 (lộn xộn): 0.53 -> 0.34.
+- Model do ai_edge_quantizer tạo có vào/ra **int8** (vào scale 0.988 zp -128; scores scale 1/273; vmap scale 1.0 ở V3-V5, 3.7 ở V1-V2): app phải đổi số. Chưa thử trên LiteRT 1.0.1 của app / Bee 3.
+
 
 Từ thí nghiệm ở repo Quantization (`5-mlsd/BAO_CAO.md`): quantize INT8 M-LSD nhanh hơn khoảng 3.6 lần nhưng chỉ giữ được 37-60% đoạn thẳng. Nguyên nhân chính: 9 kênh output dùng chung một scale (kênh displacement khoảng ±131 lấn kênh center khoảng -17..3). Activation INT16 không giúp và chậm hơn 20 lần (không có XNNPACK). Hướng sửa dự kiến: giữ layer cuối FP32, tách output head, calibration bằng ảnh tài liệu.

@@ -4,6 +4,7 @@
 # Chạy từ thư mục gốc repo:
 #   python tools/eval_quads.py                                  # model FP32 mặc định
 #   python tools/eval_quads.py --model path/to/model_int8.tflite
+#   python tools/eval_quads.py --raw data/raw/<tên>.npz          # dùng output thô có sẵn (tools/run_raw.py)
 # Ra: bảng tổng kết + data/eval_results/<tên model>.csv (kết quả từng khung)
 #
 # Thước đo:
@@ -28,6 +29,7 @@ from utils import pred_squares
 parser = argparse.ArgumentParser()
 parser.add_argument("--model", default="third_party/mlsd-official/tflite_models/M-LSD_512_tiny_fp32.tflite")
 parser.add_argument("--eval", default="data/eval.csv")
+parser.add_argument("--raw", help="file .npz output thô từ tools/run_raw.py (không chạy model ở đây)")
 parser.add_argument("--good-iou", type=float, default=0.9, help="IoU từ mức này trở lên coi là tìm đúng")
 args = parser.parse_args()
 
@@ -35,6 +37,21 @@ interpreter = tf.lite.Interpreter(model_path=args.model)
 interpreter.allocate_tensors()
 inp = interpreter.get_input_details()
 out = interpreter.get_output_details()
+
+
+class FakeInterpreter:
+    # pred_squares tự gọi interpreter; giả lập để nó dùng output thô đọc từ file --raw
+    def __init__(self, pts, scores, vmap):
+        self.t = {out[0]["index"]: pts[None], out[1]["index"]: scores[None], out[2]["index"]: vmap[None]}
+    def set_tensor(self, *a): pass
+    def invoke(self): pass
+    def get_tensor(self, i): return self.t[i]
+
+
+raw = None
+if args.raw:
+    raw = np.load(args.raw)
+    raw_index = {p: k for k, p in enumerate(raw["image_path"])}
 
 
 def iou(q1, q2, h, w):
@@ -64,7 +81,11 @@ for k, r in enumerate(rows):
     h, w = img.shape[:2]
     gt = np.array([[float(r[f"{c}_x"]), float(r[f"{c}_y"])] for c in ["tl", "tr", "br", "bl"]])
     try:
-        _, squares, _, _ = pred_squares(img, interpreter, inp, out, input_shape=[512, 512])
+        it = interpreter
+        if raw is not None:
+            k = raw_index[r["image_path"]]
+            it = FakeInterpreter(raw["pts"][k], raw["scores"][k], raw["vmap"][k])
+        _, squares, _, _ = pred_squares(img, it, inp, out, input_shape=[512, 512])
     except IndexError:                       # repo gốc crash khi không có đoạn nào
         squares = []
     if len(squares) == 0:
@@ -80,7 +101,7 @@ for k, r in enumerate(rows):
 
 # Lưu kết quả từng khung
 os.makedirs("data/eval_results", exist_ok=True)
-name = os.path.splitext(os.path.basename(args.model))[0]
+name = os.path.splitext(os.path.basename(args.raw or args.model))[0]
 with open(f"data/eval_results/{name}.csv", "w") as f:
     wr = csv.DictWriter(f, fieldnames=["image_path", "bg_name", "model_name", "found", "n_squares", "iou", "corner_err"])
     wr.writeheader()
@@ -95,7 +116,7 @@ def summary(rs):
             f"(trung vi {np.median(errs) if len(errs) else float('nan'):5.1f})")
 
 
-print(f"\nModel: {args.model}  ({time.time() - t0:.0f} s)")
+print(f"\nModel: {args.raw or args.model}  ({time.time() - t0:.0f} s)")
 print("Tat ca    : " + summary(results))
 by_bg = defaultdict(list)
 for r in results:
