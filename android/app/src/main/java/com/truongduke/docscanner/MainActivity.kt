@@ -3,6 +3,8 @@ package com.truongduke.docscanner
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.media.ExifInterface
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
@@ -172,5 +174,25 @@ fun loadBitmap(context: Context, uri: Uri, maxSide: Int = 2048): Bitmap? {
 
     // Lần 2: đọc ảnh thật với hệ số đó
     val opts = BitmapFactory.Options().apply { inSampleSize = sample }
-    return context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
+    val bmp = context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
+        ?: return null
+
+    // Lần 3: xoay ảnh cho đúng chiều theo thẻ EXIF.
+    // Camera (nhất là iPhone) hay lưu điểm ảnh nằm ngang kèm thẻ "cần xoay 90°"; BitmapFactory bỏ qua thẻ này.
+    // cv2.imread bên Python thì có xoay, nên xoay ở đây để giống bản Python.
+    val orientation = context.contentResolver.openInputStream(uri)?.use {
+        ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+    } ?: ExifInterface.ORIENTATION_NORMAL
+    val m = Matrix()
+    when (orientation) {
+        ExifInterface.ORIENTATION_ROTATE_90 -> m.postRotate(90f)
+        ExifInterface.ORIENTATION_ROTATE_180 -> m.postRotate(180f)
+        ExifInterface.ORIENTATION_ROTATE_270 -> m.postRotate(270f)
+        ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> m.postScale(-1f, 1f)
+        ExifInterface.ORIENTATION_FLIP_VERTICAL -> m.postScale(1f, -1f)
+        ExifInterface.ORIENTATION_TRANSPOSE -> { m.postRotate(90f); m.postScale(-1f, 1f) }
+        ExifInterface.ORIENTATION_TRANSVERSE -> { m.postRotate(270f); m.postScale(-1f, 1f) }
+        else -> return bmp   // ảnh đã đúng chiều
+    }
+    return Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
 }
