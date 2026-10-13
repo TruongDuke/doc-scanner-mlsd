@@ -46,14 +46,15 @@ import kotlin.math.min
  * Góc lưu theo pixel của ảnh gốc; lúc vẽ / kéo thì đổi qua lại với toạ độ trên màn hình (nhân / chia scale).
  */
 @Composable
-fun EditScreen(bitmap: Bitmap, initialQuad: FloatArray?, onRetake: () -> Unit, onDone: (FloatArray) -> Unit) {
+fun EditScreen(bitmap: Bitmap, initialQuad: FloatArray?, info: String, onRetake: () -> Unit, onDone: (FloatArray) -> Unit) {
     val q0 = initialQuad ?: defaultQuad(bitmap.width, bitmap.height)
     val corners = remember(bitmap) { mutableStateListOf(*Array(4) { Offset(q0[it * 2], q0[it * 2 + 1]) }) }
     var dragging by remember { mutableStateOf(-1) }
 
     Column(Modifier.fillMaxSize().background(Color.Black)) {
         Text(
-            if (initialQuad == null) "Không tìm thấy tờ giấy, hãy kéo 4 góc cho đúng" else "Kéo các góc nếu khung chưa đúng",
+            (if (initialQuad == null) "Không tìm thấy tờ giấy, hãy kéo 4 góc cho đúng" else "Kéo các góc nếu khung chưa đúng") +
+                if (info.isNotEmpty()) "\n$info" else "",
             Modifier.fillMaxWidth().padding(12.dp),
             color = Color.White,
         )

@@ -82,6 +82,7 @@ fun App(modifier: Modifier = Modifier) {
     var photo by remember { mutableStateOf<Bitmap?>(null) }      // ảnh vừa chụp
     var quad by remember { mutableStateOf<FloatArray?>(null) }   // 4 góc tờ giấy trên ảnh đó
     var scan by remember { mutableStateOf<Bitmap?>(null) }       // ảnh đã nắn thẳng
+    var captureInfo by remember { mutableStateOf("") }           // thời gian các bước lúc chụp
 
     // Nút quay lại của điện thoại: lùi 1 màn hình
     BackHandler(enabled = screen != Screen.CAMERA) {
@@ -91,10 +92,10 @@ fun App(modifier: Modifier = Modifier) {
         when (screen) {
             Screen.CAMERA -> CameraScreen(
                 model,
-                onCaptured = { b, q -> photo = b; quad = q; screen = Screen.EDIT },
+                onCaptured = { b, q, info -> photo = b; quad = q; captureInfo = info; screen = Screen.EDIT },
                 onTools = { screen = Screen.TOOLS },
             )
-            Screen.EDIT -> EditScreen(photo!!, quad, onRetake = { screen = Screen.CAMERA }, onDone = { q ->
+            Screen.EDIT -> EditScreen(photo!!, quad, captureInfo, onRetake = { screen = Screen.CAMERA }, onDone = { q ->
                 quad = q
                 scan = warpQuad(photo!!, q)
                 screen = Screen.RESULT

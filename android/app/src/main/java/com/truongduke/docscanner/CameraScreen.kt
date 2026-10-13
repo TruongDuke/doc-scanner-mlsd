@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.min
 
 // Khung xanh đang hiển thị trên màn hình camera: tứ giác theo pixel của ảnh phân tích (w x h)
@@ -57,13 +58,14 @@ private class LiveQuad(val quad: FloatArray?, val w: Int, val h: Int, val ms: Lo
  * - Preview: hình hiển thị (CameraX tự vẽ).
  * - ImageAnalysis: ảnh nhỏ 640x480 đưa vào model liên tục. Máy chậm (Bee 3 ~1.5 s / lần) thì
  *   CameraX tự bỏ các khung hình cũ (KEEP_ONLY_LATEST), chỉ phân tích khung mới nhất.
- * - ImageCapture: chụp ảnh nét (~2048x1536) khi bấm nút, rồi tìm khung trên ảnh đó.
+ * - ImageCapture: chụp ảnh nét (~2048x1536) khi bấm nút. Không tìm khung lại trên ảnh to (Bee 3 mất 2-3 s):
+ *   dùng luôn khung đang hiện (cùng góc nhìn, cùng tỉ lệ 4:3), chỉ đổi toạ độ theo kích thước ảnh.
  * Cả 3 dùng tỉ lệ 4:3, preview hiển thị kiểu FIT_CENTER, nên đổi toạ độ ảnh -> màn hình chỉ cần 1 phép co giãn.
  */
 @Composable
 fun CameraScreen(
     model: MlsdModel,
-    onCaptured: (Bitmap, FloatArray?) -> Unit,
+    onCaptured: (Bitmap, FloatArray?, String) -> Unit,   // ảnh chụp, 4 góc, dòng báo thời gian
     onTools: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -78,11 +80,13 @@ fun CameraScreen(
     var busy by remember { mutableStateOf(false) }          // đang chụp + tìm khung trên ảnh nét
     var error by remember { mutableStateOf<String?>(null) }
     val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
+    val captureExecutor = remember { Executors.newSingleThreadExecutor() }   // chụp không phải xếp hàng sau phân tích
+    val paused = remember { AtomicBoolean(false) }                           // tạm dừng phân tích trong lúc chụp
     val previewView = remember { PreviewView(context).apply { scaleType = PreviewView.ScaleType.FIT_CENTER } }
     val capture = remember {
         ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
-            .setResolutionSelector(selector43(Size(2048, 1536)))
+            .setResolutionSelector(selector43(Size(2048, 1536), ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER))
             .build()
     }
 
@@ -100,6 +104,7 @@ fun CameraScreen(
                 .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
                 .build()
             analysis.setAnalyzer(analysisExecutor) { proxy ->
+                if (paused.get()) { proxy.close(); return@setAnalyzer }
                 val bmp = proxy.toBitmap().rotated(proxy.imageInfo.rotationDegrees)
                 proxy.close()
                 val d = detectQuad(model, bmp)
@@ -114,7 +119,7 @@ fun CameraScreen(
         }, ContextCompat.getMainExecutor(context))
         onDispose { providerFuture.get().unbindAll() }
     }
-    DisposableEffect(Unit) { onDispose { analysisExecutor.shutdown() } }
+    DisposableEffect(Unit) { onDispose { analysisExecutor.shutdown(); captureExecutor.shutdown() } }
 
     Column(Modifier.fillMaxSize().background(Color.Black)) {
         Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -149,20 +154,38 @@ fun CameraScreen(
             Button(onClick = onTools) { Text("Công cụ") }
             Button(enabled = hasPermission && !busy, onClick = {
                 busy = true
-                capture.takePicture(analysisExecutor, object : ImageCapture.OnImageCapturedCallback() {
+                paused.set(true)
+                val tPress = System.nanoTime()
+                val liveAtPress = live
+                capture.takePicture(captureExecutor, object : ImageCapture.OnImageCapturedCallback() {
                     override fun onCaptureSuccess(image: ImageProxy) {
-                        // Chạy trên luồng phân tích, nên không tranh model với ImageAnalysis
+                        val tShot = System.nanoTime()
                         val bmp = image.toBitmap().rotated(image.imageInfo.rotationDegrees)
                         image.close()
-                        val d = detectQuad(model, bmp)
+                        val tDecode = System.nanoTime()
+                        // Khung: dùng khung đang hiện, đổi toạ độ từ ảnh phân tích sang ảnh chụp.
+                        // Camera chưa thấy tờ giấy thì tìm lại trên bản thu nhỏ của ảnh chụp.
+                        val quad = liveAtPress.quad?.let { q ->
+                            FloatArray(8) { if (it % 2 == 0) q[it] * bmp.width / liveAtPress.w else q[it] * bmp.height / liveAtPress.h }
+                        } ?: run {
+                            val f = 640f / maxOf(bmp.width, bmp.height)
+                            val small = Bitmap.createScaledBitmap(bmp, (bmp.width * f).toInt(), (bmp.height * f).toInt(), true)
+                            detectQuad(model, small).quad?.let { q -> FloatArray(8) { q[it] / f } }
+                        }
+                        val tQuad = System.nanoTime()
+                        fun ms(a: Long, b: Long) = (b - a) / 1_000_000
+                        val timing = "Chụp ${ms(tPress, tShot)} ms | đọc ảnh ${bmp.width}x${bmp.height} ${ms(tShot, tDecode)} ms | " +
+                            "khung ${ms(tDecode, tQuad)} ms" + if (liveAtPress.quad != null) " (lấy từ camera)" else " (tìm lại)"
                         ContextCompat.getMainExecutor(context).execute {
                             busy = false
-                            onCaptured(bmp, d.quad)
+                            paused.set(false)
+                            onCaptured(bmp, quad, timing)
                         }
                     }
 
                     override fun onError(e: ImageCaptureException) {
                         busy = false
+                        paused.set(false)
                         error = "Chụp lỗi: ${e.message}"
                     }
                 })
@@ -172,8 +195,8 @@ fun CameraScreen(
 }
 
 // Chọn độ phân giải tỉ lệ 4:3, gần với kích thước mong muốn (null = để CameraX tự chọn)
-private fun selector43(size: Size?): ResolutionSelector {
+private fun selector43(size: Size?, rule: Int = ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER): ResolutionSelector {
     val b = ResolutionSelector.Builder().setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
-    if (size != null) b.setResolutionStrategy(ResolutionStrategy(size, ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER))
+    if (size != null) b.setResolutionStrategy(ResolutionStrategy(size, rule))
     return b.build()
 }
