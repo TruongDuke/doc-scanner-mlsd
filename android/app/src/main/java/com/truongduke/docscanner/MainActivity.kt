@@ -9,12 +9,14 @@ import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Box
 import java.io.File
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.selection.selectable
@@ -61,9 +63,44 @@ class MainActivity : ComponentActivity() {
         setContent {
             DocScannerTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    ScannerScreen(Modifier.padding(innerPadding))
+                    App(Modifier.padding(innerPadding))
                 }
             }
+        }
+    }
+}
+
+// Các màn hình của app (mốc 4): camera -> chỉnh góc -> kết quả; "Công cụ" là màn hình thử nghiệm của mốc 3, 5
+enum class Screen { CAMERA, EDIT, RESULT, TOOLS }
+
+@Composable
+fun App(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    var screen by remember { mutableStateOf(Screen.CAMERA) }
+    // Camera dùng model INT8 đã sửa (nhanh nhất mà vẫn chính xác, xem mốc 5 trong CLAUDE.md)
+    val model = remember { MlsdModel(context, ModelChoice.INT8_FIXED.file) }
+    var photo by remember { mutableStateOf<Bitmap?>(null) }      // ảnh vừa chụp
+    var quad by remember { mutableStateOf<FloatArray?>(null) }   // 4 góc tờ giấy trên ảnh đó
+    var scan by remember { mutableStateOf<Bitmap?>(null) }       // ảnh đã nắn thẳng
+
+    // Nút quay lại của điện thoại: lùi 1 màn hình
+    BackHandler(enabled = screen != Screen.CAMERA) {
+        screen = if (screen == Screen.RESULT) Screen.EDIT else Screen.CAMERA
+    }
+    Box(modifier) {
+        when (screen) {
+            Screen.CAMERA -> CameraScreen(
+                model,
+                onCaptured = { b, q -> photo = b; quad = q; screen = Screen.EDIT },
+                onTools = { screen = Screen.TOOLS },
+            )
+            Screen.EDIT -> EditScreen(photo!!, quad, onRetake = { screen = Screen.CAMERA }, onDone = { q ->
+                quad = q
+                scan = warpQuad(photo!!, q)
+                screen = Screen.RESULT
+            })
+            Screen.RESULT -> ResultScreen(scan!!, onBack = { screen = Screen.EDIT }, onNew = { screen = Screen.CAMERA })
+            Screen.TOOLS -> ScannerScreen()
         }
     }
 }
@@ -73,8 +110,8 @@ fun ScannerScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     // Ảnh đang hiển thị. null = chưa chọn ảnh nào
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
-    // Model đang chọn, và các model đã nạp (mỗi model nạp 1 lần, lúc dùng lần đầu)
-    var choice by remember { mutableStateOf(ModelChoice.NAVER_FP32) }
+    // Model app dùng, và các model đã nạp (mỗi model nạp 1 lần, lúc dùng lần đầu)
+    val choice = ModelChoice.INT8_FIXED
     val loaded = remember { mutableMapOf<ModelChoice, MlsdModel>() }
     fun modelFor(c: ModelChoice): MlsdModel = synchronized(loaded) {
         loaded.getOrPut(c) { MlsdModel(context, c.file).also { Log.d("MLSD", "${c.label}\n${it.describe()}") } }
@@ -87,7 +124,7 @@ fun ScannerScreen(modifier: Modifier = Modifier) {
     var goldenReport by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
-    // Mỗi khi đổi ảnh hoặc đổi model: chạy model ở luồng nền (không làm đơ giao diện), xong thì cập nhật info
+    // Mỗi khi đổi ảnh: chạy model ở luồng nền (không làm đơ giao diện), xong thì cập nhật info
     LaunchedEffect(bitmap, choice) {
         val bmp = bitmap ?: return@LaunchedEffect
         info = "Đang chạy model..."
@@ -146,27 +183,16 @@ fun ScannerScreen(modifier: Modifier = Modifier) {
                 Text("Kiểm tra golden")
             }
         }
-        // Đo tốc độ phần model của cả 4 model trên cùng 1 ảnh (ảnh đang chọn, không có thì dùng frame_1 của golden)
+        // Đo tốc độ phần model trên 1 ảnh (ảnh đang chọn, không có thì dùng frame_1 của golden)
         Button(onClick = {
-            goldenReport = "Đang đo tốc độ (mỗi model 2 lần làm nóng + 10 lần đo)..."
+            goldenReport = "Đang đo tốc độ (2 lần làm nóng + 10 lần đo)..."
             scope.launch {
-                goldenReport = withContext(Dispatchers.Default) { runBenchmark(context, bitmap, ::modelFor) }
+                goldenReport = withContext(Dispatchers.Default) { runBenchmark(context, bitmap, modelFor(choice), choice.label) }
                 Log.d("MLSD", goldenReport ?: "")
             }
         }) {
             Text("Đo tốc độ")
         }
-        // Chọn model
-        ModelChoice.entries.forEach { c ->
-            Row(
-                Modifier.fillMaxWidth().selectable(selected = c == choice, onClick = { choice = c; goldenReport = null }),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                RadioButton(selected = c == choice, onClick = { choice = c; goldenReport = null })
-                Text(c.label)
-            }
-        }
-
         Spacer(Modifier.height(16.dp))
 
         val bmp = bitmap
@@ -191,8 +217,8 @@ fun ScannerScreen(modifier: Modifier = Modifier) {
     }
 }
 
-// Đo tốc độ riêng phần model (không tính tiền xử lý / post-processing) của mọi model trên cùng 1 ảnh
-fun runBenchmark(context: Context, bitmap: Bitmap?, modelFor: (ModelChoice) -> MlsdModel): String {
+// Đo tốc độ riêng phần model (không tính tiền xử lý / post-processing) trên 1 ảnh
+fun runBenchmark(context: Context, bitmap: Bitmap?, model: MlsdModel, label: String): String {
     val golden = File(goldenDir(context), "frame_1_rgb.bin")
     val (rgb, w, h, src) = when {
         bitmap != null -> listOf(bitmapToRgb(bitmap), bitmap.width, bitmap.height, "ảnh đang chọn")
@@ -200,10 +226,8 @@ fun runBenchmark(context: Context, bitmap: Bitmap?, modelFor: (ModelChoice) -> M
         else -> listOf(ByteArray(512 * 512 * 3) { 128.toByte() }, 512, 512, "ảnh xám")
     }
     val sb = StringBuilder("Tốc độ phần model trên $src (${w as Int} x ${h as Int}), 4 thread:\n\n")
-    for (c in ModelChoice.entries) {
-        val t = modelFor(c).benchmark(rgb as ByteArray, w, h).sorted()
-        sb.append("%-22s trung vị %5d ms (nhanh nhất %d, chậm nhất %d)\n".format(c.label, t[t.size / 2], t.first(), t.last()))
-    }
+    val t = model.benchmark(rgb as ByteArray, w, h).sorted()
+    sb.append("%s: trung vị %d ms (nhanh nhất %d, chậm nhất %d)\n".format(label, t[t.size / 2], t.first(), t.last()))
     return sb.toString()
 }
 

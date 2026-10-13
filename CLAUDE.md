@@ -24,7 +24,7 @@ Mốc 1, 2, 3 xong.
 
 Điện thoại thật của user: **Vsmart Bee 3** (MediaTek MT6739, 4x Cortex-A53, **32-bit armeabi-v7a**, RAM 2 GB, Android 9, cổng micro-USB; serial adb `AIE00201260`, cần `ANDROID_SERIAL` khi máy ảo cũng chạy). Trên máy này Logcat không hiện `Log.d` của app, đọc kết quả qua màn hình (`uiautomator dump`). Kết quả "Kiểm tra golden" (13/10): (A) 6/6, (B) 6/6 PASS (model lệch score ~1e-6, vmap ~1e-2 nhưng đoạn / tứ giác khớp hết); (C) giải mã JPEG của máy khác cv2 (lệch tới 32 mức) nên kết quả từ file JPEG khác Python, chỉ để tham khảo. Thời gian FP32: model ~2.05 s, tiền xử lý ảnh 1920x1440 ~1.8 s (cần tối ưu `bitmapToRgb` + `resizeArea`), post-processing 35 ms (ảnh nhiều tứ giác 372 ms).
 
-Mốc 4 (chưa bắt đầu): CameraX chạy liên tục, chụp, nắn thẳng, chỉnh góc, lưu ảnh.
+Mốc 4 (đang làm, 13/10): app mở vào màn hình camera (`CameraScreen.kt`, CameraX 1.3.4: Preview + ImageAnalysis 640x480 KEEP_ONLY_LATEST + ImageCapture ~2048x1536, cùng tỉ lệ 4:3, PreviewView FIT_CENTER), khung xanh trực tiếp bằng model INT8 đã sửa; Chụp -> `EditScreen` (kéo 4 góc) -> nắn thẳng (`warpQuad`, Matrix.setPolyToPoly) -> `ResultScreen` (lưu vào Pictures/DocScanner; Android 9 như Bee 3 cần quyền WRITE_EXTERNAL_STORAGE). Logic chung ở `Scan.kt` (`detectQuad` bỏ tứ giác < 5% diện tích ảnh, `orderCorners`, `warpQuad`, `saveToGallery`). Màn hình cũ thành "Công cụ" (chọn ảnh, Kiểm tra golden, Đo tốc độ). App chỉ còn 2 model: INT8 đã sửa (dùng mọi chỗ) và NAVER FP32 (chỉ cho Kiểm tra golden). Đã chạy hết luồng trên máy ảo; chưa thử kỹ trên Bee 3 (kết nối USB chập chờn).
 
 Chạy golden test từ thư mục gốc repo:
 ```bash

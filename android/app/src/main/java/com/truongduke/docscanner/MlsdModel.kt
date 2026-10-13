@@ -37,15 +37,15 @@ fun bitmapToRgb(bitmap: Bitmap): ByteArray {
     return rgb
 }
 
-// Các model có trong assets/. Cùng đầu vào / đầu ra (giống bản NAVER), khác trọng số hoặc cách quantize
+// Các model có trong assets/ (cùng đầu vào / đầu ra như bản NAVER):
+// - INT8_FIXED: model app dùng (lhwcv, tách head + cắt ngoại lai, INT8, xem mốc 5 trong CLAUDE.md)
+// - NAVER_FP32: chỉ để chạy "Kiểm tra golden" (golden sinh từ model này)
 enum class ModelChoice(val label: String, val file: String) {
+    INT8_FIXED("lhwcv INT8 đã sửa", "lhwcv_v3_splitclip_int8.tflite"),
     NAVER_FP32("NAVER FP32 (gốc)", "M-LSD_512_tiny_fp32.tflite"),
-    LHWCV_FP32("lhwcv FP32", "lhwcv_fp32.tflite"),
-    LHWCV_INT8("lhwcv INT8 mặc định", "lhwcv_v1_int8.tflite"),
-    LHWCV_INT8_FIXED("lhwcv INT8 đã sửa", "lhwcv_v3_splitclip_int8.tflite"),
 }
 
-class MlsdModel(context: Context, modelFile: String = ModelChoice.NAVER_FP32.file) {
+class MlsdModel(context: Context, modelFile: String = ModelChoice.INT8_FIXED.file) {
     private val interpreter: Interpreter
 
     init {

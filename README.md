@@ -26,8 +26,8 @@ Phần kỹ thuật:
 | 1 | `pred_lines` bằng Kotlin, kiểm tra với kết quả Python (golden test) | Xong |
 | 2 | `pred_squares` bằng Kotlin, có golden test | Xong |
 | 3 | App Android: chọn ảnh có sẵn, detect box, vẽ lên | Xong |
-| 4 | Camera chạy liên tục, chụp, nắn thẳng, chỉnh góc, lưu ảnh | Đang làm |
-| 5 | Sửa quantization M-LSD để bản INT8 không bị hỏng | |
+| 4 | Camera chạy liên tục, chụp, nắn thẳng, chỉnh góc, lưu ảnh | Đang làm (đã có camera + khung trực tiếp, chụp, chỉnh góc, nắn thẳng, lưu) |
+| 5 | Sửa quantization M-LSD để bản INT8 không bị hỏng | Xong phần chính (INT8 đã sửa: IoU 0.751 so với FP32 0.802) |
 | 6 | Chọn model / CPU / GPU, hiện số đo, chế độ benchmark | |
 | 7 | Viết lại quá trình: đã thử gì, sai ở đâu, sửa thế nào | |
 
