@@ -15,6 +15,10 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import java.io.File
+import androidx.compose.ui.Alignment
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.material3.RadioButton
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.unit.sp
@@ -69,8 +73,12 @@ fun ScannerScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     // Ảnh đang hiển thị. null = chưa chọn ảnh nào
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
-    // Model chỉ nạp 1 lần khi mở màn hình
-    val model = remember { MlsdModel(context).also { Log.d("MLSD", it.describe()) } }
+    // Model đang chọn, và các model đã nạp (mỗi model nạp 1 lần, lúc dùng lần đầu)
+    var choice by remember { mutableStateOf(ModelChoice.NAVER_FP32) }
+    val loaded = remember { mutableMapOf<ModelChoice, MlsdModel>() }
+    fun modelFor(c: ModelChoice): MlsdModel = synchronized(loaded) {
+        loaded.getOrPut(c) { MlsdModel(context, c.file).also { Log.d("MLSD", "${c.label}\n${it.describe()}") } }
+    }
     // Dòng chữ báo kết quả model
     var info by remember { mutableStateOf("") }
     // Ảnh đã vẽ kết quả lên (null = chưa có, hiện ảnh gốc)
@@ -79,14 +87,14 @@ fun ScannerScreen(modifier: Modifier = Modifier) {
     var goldenReport by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
-    // Mỗi khi đổi ảnh: chạy model ở luồng nền (không làm đơ giao diện), xong thì cập nhật info
-    LaunchedEffect(bitmap) {
+    // Mỗi khi đổi ảnh hoặc đổi model: chạy model ở luồng nền (không làm đơ giao diện), xong thì cập nhật info
+    LaunchedEffect(bitmap, choice) {
         val bmp = bitmap ?: return@LaunchedEffect
         info = "Đang chạy model..."
         annotated = null
         val (text, drawn) = withContext(Dispatchers.Default) {
             // 1. Model
-            val out = model.run(bmp)
+            val out = modelFor(choice).run(bmp)
             // 2. Post-processing: cùng code với golden test (postprocess/src)
             val t0 = System.nanoTime()
             val lines = predLines(out.pts, out.scores, out.vmap, bmp.height, bmp.width)
@@ -95,7 +103,8 @@ fun ScannerScreen(modifier: Modifier = Modifier) {
             val t2 = System.nanoTime()
 
             val best = sq.squares.firstOrNull()?.toList()?.chunked(2)?.joinToString(" ") { "(${it[0]}, ${it[1]})" } ?: "không có"
-            val text = "Tiền xử lý: ${out.prepMs} ms | Model: ${out.timeMs} ms\n" +
+            val text = "Model: ${choice.label}\n" +
+                "Tiền xử lý: ${out.prepMs} ms | Model: ${out.timeMs} ms\n" +
                 "predLines: ${lines.size} đoạn, ${(t1 - t0) / 1_000_000} ms\n" +
                 "predSquares: ${sq.segments.size} đoạn gộp, ${sq.interPoints.size} góc, " +
                 "${sq.squares.size} tứ giác, ${(t2 - t1) / 1_000_000} ms\n" +
@@ -128,12 +137,33 @@ fun ScannerScreen(modifier: Modifier = Modifier) {
             Button(onClick = {
                 goldenReport = "Đang kiểm tra..."
                 scope.launch {
-                    val report = withContext(Dispatchers.Default) { runGoldenCheck(context, model) }
+                    // Golden sinh từ model NAVER nên luôn kiểm tra bằng model NAVER
+                    val report = withContext(Dispatchers.Default) { runGoldenCheck(context, modelFor(ModelChoice.NAVER_FP32)) }
                     goldenReport = report
                     Log.d("MLSD", report)
                 }
             }) {
                 Text("Kiểm tra golden")
+            }
+        }
+        // Đo tốc độ phần model của cả 4 model trên cùng 1 ảnh (ảnh đang chọn, không có thì dùng frame_1 của golden)
+        Button(onClick = {
+            goldenReport = "Đang đo tốc độ (mỗi model 2 lần làm nóng + 10 lần đo)..."
+            scope.launch {
+                goldenReport = withContext(Dispatchers.Default) { runBenchmark(context, bitmap, ::modelFor) }
+                Log.d("MLSD", goldenReport ?: "")
+            }
+        }) {
+            Text("Đo tốc độ")
+        }
+        // Chọn model
+        ModelChoice.entries.forEach { c ->
+            Row(
+                Modifier.fillMaxWidth().selectable(selected = c == choice, onClick = { choice = c; goldenReport = null }),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RadioButton(selected = c == choice, onClick = { choice = c; goldenReport = null })
+                Text(c.label)
             }
         }
 
@@ -159,6 +189,22 @@ fun ScannerScreen(modifier: Modifier = Modifier) {
             )
         }
     }
+}
+
+// Đo tốc độ riêng phần model (không tính tiền xử lý / post-processing) của mọi model trên cùng 1 ảnh
+fun runBenchmark(context: Context, bitmap: Bitmap?, modelFor: (ModelChoice) -> MlsdModel): String {
+    val golden = File(goldenDir(context), "frame_1_rgb.bin")
+    val (rgb, w, h, src) = when {
+        bitmap != null -> listOf(bitmapToRgb(bitmap), bitmap.width, bitmap.height, "ảnh đang chọn")
+        golden.exists() -> listOf(golden.readBytes(), 1920, 1440, "frame_1 (golden)")
+        else -> listOf(ByteArray(512 * 512 * 3) { 128.toByte() }, 512, 512, "ảnh xám")
+    }
+    val sb = StringBuilder("Tốc độ phần model trên $src (${w as Int} x ${h as Int}), 4 thread:\n\n")
+    for (c in ModelChoice.entries) {
+        val t = modelFor(c).benchmark(rgb as ByteArray, w, h).sorted()
+        sb.append("%-22s trung vị %5d ms (nhanh nhất %d, chậm nhất %d)\n".format(c.label, t[t.size / 2], t.first(), t.last()))
+    }
+    return sb.toString()
 }
 
 // Đọc ảnh từ uri. Ảnh quá to (điện thoại 50MP) thì thu nhỏ để cạnh dài nhất <= 2048,

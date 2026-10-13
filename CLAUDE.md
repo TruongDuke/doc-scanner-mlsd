@@ -89,6 +89,7 @@ Kết quả trên 120 khung SmartDoc (IoU TB / đúng IoU>=0.9 / Mac 4 thread):
 - V1 INT8 mặc định: 0.395 / 36.7% (66/120 khung không tìm được tứ giác) / 10 ms.
 - V2 + tách head: 0.734 / 44.2%. V3 + cắt ngoại lai: 0.751 / 51.7% / 9.7 ms. V4 + giữ 3 layer nhạy float: 0.744. V5 + giữ head float: 0.755 / 51.7% / 10.5 ms.
 - Trên tập này giữ 3 layer nhạy ở float gần như không giúp (khác thí nghiệm 7-mlsd-lowbit đo theo % đoạn thẳng). Phần mất còn lại chủ yếu ở nền 5 (lộn xộn): 0.53 -> 0.34.
+- Trên **Bee 3** (13/10, nút "Đo tốc độ" trong app, frame_1, 4 thread, lấy lần nhanh nhất vì máy hay bận/nóng): NAVER FP32 ~1.97 s, lhwcv FP32 ~2.0 s, INT8 mặc định ~1.19 s, INT8 đã sửa ~1.18 s -> INT8 chỉ nhanh ~1.7 lần (Mac 3.4 lần), có lẽ do Cortex-A53 32-bit không có lệnh dot-product int8. LiteRT 1.4.2 không nhanh hơn 1.0.1 (app đã nâng lên 1.4.2, golden vẫn 6/6). App có 4 model trong assets, chọn bằng radio; golden luôn chạy bằng NAVER.
 - Model do ai_edge_quantizer tạo có vào/ra **int8** (vào scale 0.988 zp -128; scores scale 1/273; vmap scale 1.0 ở V3-V5, 3.7 ở V1-V2): app phải đổi số. Chưa thử trên LiteRT 1.0.1 của app / Bee 3.
 
 

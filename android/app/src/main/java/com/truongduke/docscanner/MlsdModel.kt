@@ -2,11 +2,14 @@ package com.truongduke.docscanner
 
 import android.content.Context
 import android.graphics.Bitmap
+import org.tensorflow.lite.DataType
 import org.tensorflow.lite.Interpreter
+import org.tensorflow.lite.Tensor
 import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.channels.FileChannel
+import kotlin.math.roundToInt
 import mlsd.resizeArea
 
 // Kết quả thô của model, cùng định dạng phẳng như file golden
@@ -34,7 +37,15 @@ fun bitmapToRgb(bitmap: Bitmap): ByteArray {
     return rgb
 }
 
-class MlsdModel(context: Context, modelFile: String = "M-LSD_512_tiny_fp32.tflite") {
+// Các model có trong assets/. Cùng đầu vào / đầu ra (giống bản NAVER), khác trọng số hoặc cách quantize
+enum class ModelChoice(val label: String, val file: String) {
+    NAVER_FP32("NAVER FP32 (gốc)", "M-LSD_512_tiny_fp32.tflite"),
+    LHWCV_FP32("lhwcv FP32", "lhwcv_fp32.tflite"),
+    LHWCV_INT8("lhwcv INT8 mặc định", "lhwcv_v1_int8.tflite"),
+    LHWCV_INT8_FIXED("lhwcv INT8 đã sửa", "lhwcv_v3_splitclip_int8.tflite"),
+}
+
+class MlsdModel(context: Context, modelFile: String = ModelChoice.NAVER_FP32.file) {
     private val interpreter: Interpreter
 
     init {
@@ -45,17 +56,21 @@ class MlsdModel(context: Context, modelFile: String = "M-LSD_512_tiny_fp32.tflit
         interpreter = Interpreter(model, Interpreter.Options().setNumThreads(4))
     }
 
+    // Tìm đầu ra theo kích thước (thứ tự đầu ra mỗi model có thể khác nhau)
+    private fun outIndex(vararg shape: Int) = (0 until interpreter.outputTensorCount)
+        .first { interpreter.getOutputTensor(it).shape().contentEquals(shape) }
+    private val ptsIdx = outIndex(1, 200, 2)
+    private val scoresIdx = outIndex(1, 200)
+    private val vmapIdx = outIndex(1, 256, 256, 4)
+
     // Mô tả các tensor vào/ra, để kiểm tra model đọc đúng
     fun describe(): String {
         val sb = StringBuilder()
-        for (i in 0 until interpreter.inputTensorCount) {
-            val t = interpreter.getInputTensor(i)
-            sb.append("IN  $i ${t.name()} ${t.shape().contentToString()} ${t.dataType()}\n")
-        }
-        for (i in 0 until interpreter.outputTensorCount) {
-            val t = interpreter.getOutputTensor(i)
-            sb.append("OUT $i ${t.name()} ${t.shape().contentToString()} ${t.dataType()}\n")
-        }
+        fun line(kind: String, i: Int, t: Tensor) = sb.append(
+            "$kind $i ${t.name()} ${t.shape().contentToString()} ${t.dataType()} " +
+                "scale ${t.quantizationParams().scale} zp ${t.quantizationParams().zeroPoint}\n")
+        for (i in 0 until interpreter.inputTensorCount) line("IN ", i, interpreter.getInputTensor(i))
+        for (i in 0 until interpreter.outputTensorCount) line("OUT", i, interpreter.getOutputTensor(i))
         return sb.toString()
     }
 
@@ -70,32 +85,61 @@ class MlsdModel(context: Context, modelFile: String = "M-LSD_512_tiny_fp32.tflit
         // 1. Thu ảnh về 512x512 giống hệt cv2.resize(..., interpolation=cv2.INTER_AREA) của bản Python
         val small = resizeArea(rgb, w, h, 512, 512)
 
-        // 2. Đầu vào (1, 512, 512, 4) float32: R, G, B (giữ nguyên 0..255) và kênh thứ 4 toàn số 1
-        val input = ByteBuffer.allocateDirect(512 * 512 * 4 * 4).order(ByteOrder.nativeOrder())
-        for (i in 0 until 512 * 512) {
-            input.putFloat((small[i * 3].toInt() and 0xFF).toFloat())      // R
-            input.putFloat((small[i * 3 + 1].toInt() and 0xFF).toFloat())  // G
-            input.putFloat((small[i * 3 + 2].toInt() and 0xFF).toFloat())  // B
-            input.putFloat(1f)
+        // 2. Đầu vào (1, 512, 512, 4): R, G, B (giữ nguyên 0..255) và kênh thứ 4 toàn số 1.
+        //    Model FP32: ghi số thực. Model INT8: đổi từng số sang int8 theo scale / zero_point của tensor vào
+        val inT = interpreter.getInputTensor(0)
+        val input = ByteBuffer.allocateDirect(inT.numBytes()).order(ByteOrder.nativeOrder())
+        if (inT.dataType() == DataType.INT8) {
+            val s = inT.quantizationParams().scale
+            val z = inT.quantizationParams().zeroPoint
+            // Tính sẵn 256 giá trị int8 cho 256 mức điểm ảnh, và cho số 1
+            val lut = ByteArray(256) { v -> ((v / s).roundToInt() + z).coerceIn(-128, 127).toByte() }
+            val one = ((1f / s).roundToInt() + z).coerceIn(-128, 127).toByte()
+            for (i in 0 until 512 * 512) {
+                input.put(lut[small[i * 3].toInt() and 0xFF])
+                input.put(lut[small[i * 3 + 1].toInt() and 0xFF])
+                input.put(lut[small[i * 3 + 2].toInt() and 0xFF])
+                input.put(one)
+            }
+        } else {
+            for (i in 0 until 512 * 512) {
+                input.putFloat((small[i * 3].toInt() and 0xFF).toFloat())      // R
+                input.putFloat((small[i * 3 + 1].toInt() and 0xFF).toFloat())  // G
+                input.putFloat((small[i * 3 + 2].toInt() and 0xFF).toFloat())  // B
+                input.putFloat(1f)
+            }
         }
         input.rewind()
         val prepMs = (System.nanoTime() - t0) / 1_000_000
 
-        // 3. Chỗ chứa 3 đầu ra
-        val ptsBuf = ByteBuffer.allocateDirect(200 * 2 * 4).order(ByteOrder.nativeOrder())
-        val scoresBuf = ByteBuffer.allocateDirect(200 * 4).order(ByteOrder.nativeOrder())
-        val vmapBuf = ByteBuffer.allocateDirect(256 * 256 * 4 * 4).order(ByteOrder.nativeOrder())
+        // 3. Chỗ chứa các đầu ra (kích thước theo kiểu dữ liệu của từng tensor)
+        val outBufs = (0 until interpreter.outputTensorCount).associateWith {
+            ByteBuffer.allocateDirect(interpreter.getOutputTensor(it).numBytes()).order(ByteOrder.nativeOrder())
+        }
 
         // 4. Chạy model, đo thời gian
         val t1 = System.nanoTime()
-        interpreter.runForMultipleInputsOutputs(arrayOf(input), mapOf(0 to ptsBuf, 1 to scoresBuf, 2 to vmapBuf))
+        interpreter.runForMultipleInputsOutputs(arrayOf(input), outBufs)
         val timeMs = (System.nanoTime() - t1) / 1_000_000
 
-        // 5. Chép ra mảng phẳng
-        ptsBuf.rewind(); scoresBuf.rewind(); vmapBuf.rewind()
-        val pts = IntArray(400).also { ptsBuf.asIntBuffer().get(it) }
-        val scores = FloatArray(200).also { scoresBuf.asFloatBuffer().get(it) }
-        val vmap = FloatArray(256 * 256 * 4).also { vmapBuf.asFloatBuffer().get(it) }
+        // 5. Chép ra mảng phẳng; đầu ra INT8 thì đổi ngược về số thực: (q - zero_point) * scale
+        fun floats(idx: Int, n: Int): FloatArray {
+            val t = interpreter.getOutputTensor(idx)
+            val b = outBufs.getValue(idx).also { it.rewind() }
+            if (t.dataType() != DataType.INT8) return FloatArray(n).also { b.asFloatBuffer().get(it) }
+            val s = t.quantizationParams().scale
+            val z = t.quantizationParams().zeroPoint
+            return FloatArray(n) { (b.get(it) - z) * s }
+        }
+        val pts = IntArray(400).also { outBufs.getValue(ptsIdx).rewind(); outBufs.getValue(ptsIdx).asIntBuffer().get(it) }
+        val scores = floats(scoresIdx, 200)
+        val vmap = floats(vmapIdx, 256 * 256 * 4)
         return MlsdOutput(pts, scores, vmap, timeMs, prepMs)
+    }
+
+    // Đo tốc độ riêng phần model: chạy runs lần trên cùng 1 ảnh (sau warmup lần chạy làm nóng), trả về các thời gian (ms)
+    fun benchmark(rgb: ByteArray, w: Int, h: Int, warmup: Int = 2, runs: Int = 10): List<Long> {
+        repeat(warmup) { runRgb(rgb, w, h) }
+        return List(runs) { runRgb(rgb, w, h).timeMs }
     }
 }
