@@ -23,6 +23,13 @@ import mlsd.predSquares
 
 class Detection(val quad: FloatArray?, val ms: Long)
 
+// Trọng số chấm điểm tứ giác cho ảnh tài liệu (trọng số gốc của M-LSD chọn cho ảnh nội thất: wArea 1.86, wOverlap 0).
+// Chọn bằng tools/tune_square_weights.py trên 360 khung SmartDoc: IoU 0.769 -> 0.840, khung đúng 52% -> 74%.
+// Tăng wArea: ưu tiên cả tờ giấy hơn là hình chữ nhật nhỏ bên trong (đường kẻ, khối chữ).
+// Bật wOverlap: ưu tiên tứ giác có cạnh nằm trên đoạn thẳng thật.
+const val DOC_W_AREA = 5.0
+const val DOC_W_OVERLAP = 1.0
+
 // Tứ giác nhỏ hơn mức này (so với diện tích ảnh) không thể là tờ giấy cần scan, bỏ qua
 const val MIN_QUAD_AREA = 0.05f
 
@@ -42,7 +49,7 @@ fun quadArea(q: FloatArray): Float {
 fun detectQuad(model: MlsdModel, bmp: Bitmap): Detection {
     val t0 = System.nanoTime()
     val out = synchronized(model) { model.run(bmp) }
-    val sq = predSquares(out.pts, out.scores, out.vmap, bmp.height, bmp.width)
+    val sq = predSquares(out.pts, out.scores, out.vmap, bmp.height, bmp.width, wArea = DOC_W_AREA, wOverlap = DOC_W_OVERLAP)
     val minArea = MIN_QUAD_AREA * bmp.width * bmp.height
     val quad = sq.squares.asSequence()
         .map { s -> FloatArray(8) { s[it].toFloat() } }

@@ -3,7 +3,8 @@
 # Tách bước này ra vì môi trường TensorFlow 2.15 (dùng cho pred_squares) có thể đọc sai model
 # do công cụ mới (litert-torch, ai-edge-quantizer) tạo ra.
 #
-# Chạy từ thư mục gốc repo:  <python có ai_edge_litert> tools/run_raw.py data/models/lhwcv_fp32.tflite
+# Chạy từ thư mục gốc repo:  <python có ai_edge_litert> tools/run_raw.py data/models/lhwcv_fp32.tflite [danh sách .csv]
+# Mặc định chạy trên data/eval.csv; nếu đưa danh sách khác (vd. data/tune.csv) thì tên file ra thêm hậu tố _tune.
 import csv
 import os
 import sys
@@ -14,7 +15,7 @@ import numpy as np
 from ai_edge_litert.interpreter import Interpreter
 
 model = sys.argv[1]
-rows = list(csv.DictReader(open("data/eval.csv")))
+rows = list(csv.DictReader(open(sys.argv[2] if len(sys.argv) > 2 else "data/eval.csv")))
 
 it = Interpreter(model_path=model, num_threads=4)
 it.allocate_tensors()
@@ -53,7 +54,7 @@ for r in rows:
     vmap.append(o[2][0])
 
 os.makedirs("data/raw", exist_ok=True)
-name = os.path.splitext(os.path.basename(model))[0]
+name = os.path.splitext(os.path.basename(model))[0] + ("" if len(sys.argv) < 3 else "_" + os.path.splitext(os.path.basename(sys.argv[2]))[0])
 np.savez(f"data/raw/{name}.npz", image_path=np.array([r["image_path"] for r in rows]),
          pts=np.array(pts), scores=np.array(scores), vmap=np.array(vmap))
 print(f"Da luu data/raw/{name}.npz ({len(rows)} khung, model {np.median(times):.1f} ms/khung tren Mac, 4 thread)")
