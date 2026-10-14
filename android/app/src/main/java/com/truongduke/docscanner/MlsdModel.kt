@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import org.tensorflow.lite.DataType
 import org.tensorflow.lite.Interpreter
 import org.tensorflow.lite.Tensor
+import org.tensorflow.lite.gpu.GpuDelegate
 import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -39,21 +40,35 @@ fun bitmapToRgb(bitmap: Bitmap): ByteArray {
 
 // Các model có trong assets/ (cùng đầu vào / đầu ra như bản NAVER):
 // - INT8_FIXED: model app dùng (lhwcv, tách head + cắt ngoại lai, INT8, xem mốc 5 trong CLAUDE.md)
-// - NAVER_FP32: chỉ để chạy "Kiểm tra golden" (golden sinh từ model này)
+// - NAVER_FP32: để chạy "Kiểm tra golden" (golden sinh từ model này) và so tốc độ
+// - NAVER_FP16: chỉ để so tốc độ CPU / GPU (mốc 6)
 enum class ModelChoice(val label: String, val file: String) {
-    INT8_FIXED("lhwcv INT8 đã sửa", "lhwcv_v3_splitclip_int8.tflite"),
-    NAVER_FP32("NAVER FP32 (gốc)", "M-LSD_512_tiny_fp32.tflite"),
+    INT8_FIXED("INT8 đã sửa", "lhwcv_v3_splitclip_int8.tflite"),
+    NAVER_FP32("NAVER FP32", "M-LSD_512_tiny_fp32.tflite"),
+    NAVER_FP16("NAVER FP16", "M-LSD_512_tiny_fp16.tflite"),
 }
 
-class MlsdModel(context: Context, modelFile: String = ModelChoice.INT8_FIXED.file) {
+// useGpu: chạy trên GPU qua GpuDelegate (phép nào GPU không làm được thì tự quay về CPU).
+// Lưu ý: model chạy GPU phải được tạo và dùng trên cùng 1 luồng, dùng xong gọi close().
+class MlsdModel(context: Context, modelFile: String = ModelChoice.INT8_FIXED.file, useGpu: Boolean = false) {
     private val interpreter: Interpreter
+    private val gpu: GpuDelegate?
 
     init {
         // Đọc file model trong assets/ (map thẳng vào bộ nhớ, không chép)
         val fd = context.assets.openFd(modelFile)
         val model = FileInputStream(fd.fileDescriptor).channel
             .map(FileChannel.MapMode.READ_ONLY, fd.startOffset, fd.declaredLength)
-        interpreter = Interpreter(model, Interpreter.Options().setNumThreads(4))
+        val options = Interpreter.Options().setNumThreads(4)
+        // GPU: cho phép tính bằng FP16 (nhanh hơn trên GPU điện thoại, sai số rất nhỏ)
+        gpu = if (useGpu) GpuDelegate(GpuDelegate.Options().setPrecisionLossAllowed(true)) else null
+        gpu?.let { options.addDelegate(it) }
+        interpreter = Interpreter(model, options)
+    }
+
+    fun close() {
+        interpreter.close()
+        gpu?.close()
     }
 
     // Tìm đầu ra theo kích thước (thứ tự đầu ra mỗi model có thể khác nhau)

@@ -26,6 +26,9 @@ Mốc 1, 2, 3 xong.
 
 Mốc 4 (đang làm, 13/10): app mở vào màn hình camera (`CameraScreen.kt`, CameraX 1.3.4: Preview + ImageAnalysis 640x480 KEEP_ONLY_LATEST + ImageCapture ~2048x1536, cùng tỉ lệ 4:3, PreviewView FIT_CENTER), khung xanh trực tiếp bằng model INT8 đã sửa; Chụp -> `EditScreen` (kéo 4 góc) -> nắn thẳng (`warpQuad`, Matrix.setPolyToPoly) -> `ResultScreen` (lưu vào Pictures/DocScanner; Android 9 như Bee 3 cần quyền WRITE_EXTERNAL_STORAGE). Logic chung ở `Scan.kt` (`detectQuad` bỏ tứ giác < 5% diện tích ảnh, `orderCorners`, `warpQuad`, `saveToGallery`). Màn hình cũ thành "Công cụ" (chọn ảnh, Kiểm tra golden, Đo tốc độ). App chỉ còn 2 model: INT8 đã sửa (dùng mọi chỗ) và NAVER FP32 (chỉ cho Kiểm tra golden). Đã chạy hết luồng trên máy ảo; chưa thử kỹ trên Bee 3 (kết nối USB chập chờn).
 
+Mốc 6 (14/10, nút "Đo tốc độ" ở Công cụ, Bee 3, frame_1, trung vị 5 lần): GPU = PowerVR GE8100 (OpenGL ES 3.2, có OpenCL), không có driver NNAPI riêng.
+NAVER FP32 CPU 1987 ms / GPU 1418 ms (tạo model GPU 23 s); NAVER FP16 CPU 1986 / GPU 1423 (23 s); INT8 đã sửa CPU **1177** / GPU 1993 ms (30 s, điểm center chỉ trùng 27/40 với CPU). -> Nhanh nhất vẫn là INT8 trên CPU; GPU chỉ lợi cho FP32/FP16 (~1.4 lần) nhưng khởi động rất lâu (có thể cache bằng serialization của GpuDelegate). Thư viện: litert-gpu / litert-gpu-api 1.4.2; assets có thêm NAVER FP16.
+
 Chạy golden test từ thư mục gốc repo:
 ```bash
 kotlinc postprocess/src/PredLines.kt postprocess/test/GoldenLines.kt -include-runtime -d build/predlines.jar && java -jar build/predlines.jar

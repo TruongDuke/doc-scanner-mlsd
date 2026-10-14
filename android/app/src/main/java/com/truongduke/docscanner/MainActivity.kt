@@ -186,9 +186,9 @@ fun ScannerScreen(modifier: Modifier = Modifier) {
         }
         // Đo tốc độ phần model trên 1 ảnh (ảnh đang chọn, không có thì dùng frame_1 của golden)
         Button(onClick = {
-            goldenReport = "Đang đo tốc độ (2 lần làm nóng + 10 lần đo)..."
+            goldenReport = "Đang đo tốc độ 6 tổ hợp model x CPU/GPU (mất vài phút)..."
             scope.launch {
-                goldenReport = withContext(Dispatchers.Default) { runBenchmark(context, bitmap, modelFor(choice), choice.label) }
+                goldenReport = withContext(Dispatchers.Default) { runBenchmark(context, bitmap) }
                 Log.d("MLSD", goldenReport ?: "")
             }
         }) {
@@ -218,17 +218,40 @@ fun ScannerScreen(modifier: Modifier = Modifier) {
     }
 }
 
-// Đo tốc độ riêng phần model (không tính tiền xử lý / post-processing) trên 1 ảnh
-fun runBenchmark(context: Context, bitmap: Bitmap?, model: MlsdModel, label: String): String {
+// Đo tốc độ riêng phần model (không tính tiền xử lý / post-processing) của từng model trên CPU và GPU.
+// Cả hàm chạy liền trên 1 luồng (model GPU phải tạo và dùng trên cùng 1 luồng).
+// Mỗi tổ hợp: thời gian tạo model (GPU phải "dịch" model lúc này), 2 lần làm nóng, 5 lần đo.
+// Kiểm tra GPU ra đúng: so các điểm center (score > 0.1) với chính model đó chạy CPU.
+fun runBenchmark(context: Context, bitmap: Bitmap?): String {
     val golden = File(goldenDir(context), "frame_1_rgb.bin")
     val (rgb, w, h, src) = when {
         bitmap != null -> listOf(bitmapToRgb(bitmap), bitmap.width, bitmap.height, "ảnh đang chọn")
         golden.exists() -> listOf(golden.readBytes(), 1920, 1440, "frame_1 (golden)")
         else -> listOf(ByteArray(512 * 512 * 3) { 128.toByte() }, 512, 512, "ảnh xám")
     }
-    val sb = StringBuilder("Tốc độ phần model trên $src (${w as Int} x ${h as Int}), 4 thread:\n\n")
-    val t = model.benchmark(rgb as ByteArray, w, h).sorted()
-    sb.append("%s: trung vị %d ms (nhanh nhất %d, chậm nhất %d)\n".format(label, t[t.size / 2], t.first(), t.last()))
+    rgb as ByteArray; w as Int; h as Int
+    val sb = StringBuilder("Tốc độ phần model trên $src ($w x $h), CPU 4 thread:\n\n")
+    for (c in listOf(ModelChoice.NAVER_FP32, ModelChoice.NAVER_FP16, ModelChoice.INT8_FIXED)) {
+        var cpuPts: Set<Int>? = null
+        for (gpu in listOf(false, true)) {
+            val name = "%-12s %s".format(c.label, if (gpu) "GPU" else "CPU")
+            try {
+                val t0 = System.nanoTime()
+                val m = MlsdModel(context, c.file, useGpu = gpu)
+                val initMs = (System.nanoTime() - t0) / 1_000_000
+                val t = m.benchmark(rgb, w, h, warmup = 2, runs = 5).sorted()
+                // Các điểm center được giữ (theo chỉ số ô y * 256 + x), để so CPU với GPU
+                val out = m.runRgb(rgb, w, h)
+                val pts = (0 until 200).filter { out.scores[it] > 0.1f }.map { out.pts[it * 2] * 256 + out.pts[it * 2 + 1] }.toSet()
+                m.close()
+                val same = cpuPts?.let { cp -> " | điểm trùng CPU ${(pts intersect cp).size}/${cp.size}" } ?: ""
+                if (!gpu) cpuPts = pts
+                sb.append("$name: ${t[t.size / 2]} ms (nhanh nhất ${t.first()}) | tạo model ${initMs} ms$same\n")
+            } catch (e: Throwable) {
+                sb.append("$name: LỖI ${e.javaClass.simpleName}: ${e.message?.take(120)}\n")
+            }
+        }
+    }
     return sb.toString()
 }
 
