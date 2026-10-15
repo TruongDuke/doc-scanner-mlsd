@@ -10,3 +10,4 @@ samples/*
 !android/gradle/wrapper/gradle-wrapper.jar
 android/.idea/
 data/
+.venv-paddle/
