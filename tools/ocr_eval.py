@@ -53,9 +53,13 @@ class Recognizer:
 
 
 def prep(bgr, width=320, height=48):
-    # Giống RapidOCR / PaddleOCR khi suy luận: co về cao 48 giữ tỉ lệ (tối đa rộng 320), chuẩn hoá, đệm 0 bên phải
+    # Giống RapidOCR / PaddleOCR khi suy luận: co về cao 48 giữ tỉ lệ (tối đa rộng `width`), chuẩn hoá, đệm 0 bên phải.
+    # width = 0: rộng tự động theo tỉ lệ ảnh (làm tròn lên bội của 8, tối thiểu 320) -> đọc được dòng dài;
+    #            chỉ dùng được với model .onnx (TFLite có kích thước cố định).
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
     h, w = rgb.shape[:2]
+    if width == 0:
+        width = max(320, int(np.ceil(height * w / h / 8)) * 8)
     nw = min(width, int(np.ceil(height * w / h)))
     im = cv2.resize(rgb, (nw, height)).astype(np.float32)
     im = (im / 255.0 - 0.5) / 0.5
@@ -96,6 +100,7 @@ def main():
     ap.add_argument("--labels", required=True, help="file nhãn trong thư mục data")
     ap.add_argument("--dict", help="file từ điển (bỏ trống: lấy từ metadata .onnx)")
     ap.add_argument("--show", type=int, default=10, help="in bao nhiêu dòng sai đầu tiên")
+    ap.add_argument("--width", type=int, default=320, help="độ rộng ảnh vào; 0 = tự động theo độ dài dòng (chỉ .onnx)")
     args = ap.parse_args()
 
     chars = load_dict(args.model, args.dict)
@@ -105,7 +110,7 @@ def main():
     for line in open(os.path.join(args.data, args.labels), encoding="utf-8"):
         path, gt = line.rstrip("\n").split("\t", 1)
         gt = unicodedata.normalize("NFC", gt)
-        pred = unicodedata.normalize("NFC", ctc_decode(rec(prep(cv2.imread(os.path.join(args.data, path)))), chars))
+        pred = unicodedata.normalize("NFC", ctc_decode(rec(prep(cv2.imread(os.path.join(args.data, path)), args.width)), chars))
         e = levenshtein(pred, gt)
         n_err += e
         n_chars += len(gt)
@@ -115,7 +120,7 @@ def main():
         n += 1
         if e and len(wrong) < args.show:
             wrong.append((gt, pred))
-    print(f"{os.path.basename(args.model)} | {n} dong | CER {n_err / n_chars * 100:.2f}% | CER bo dau {n_err_nm / n_chars_nm * 100:.2f}% "
+    print(f"{os.path.basename(args.model)} | rong {args.width or 'tu dong'} | {n} dong | CER {n_err / n_chars * 100:.2f}% | CER bo dau {n_err_nm / n_chars_nm * 100:.2f}% "
           f"| dong dung {n_ok / n * 100:.1f}%")
     for gt, pred in wrong:
         print(f"   dung: {gt!r:32}  doc: {pred!r}")
