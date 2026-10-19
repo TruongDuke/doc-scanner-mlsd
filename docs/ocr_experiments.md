@@ -167,6 +167,15 @@ trung vị chênh 1-5%, có lúc máy bận làm trung vị tăng tới 1.9 lầ
 
 - FP16 không nhanh hơn FP32 trên CPU (chỉ nhỏ file). INT8 nhanh 2.2 lần (M-LSD trên Bee 3: 1.7 lần).
 - Ước tính 1 trang A4 hành chính (~41 dòng, phân bố cỡ của govdocs): FP32 ~23 s, INT8 ~10.5 s (chưa tính bước tìm dòng DBNet).
+
+**Trong app trên Bee 3** (20/10, nút "Kiểm tra OCR", `OcrRecognizer.kt` + `OcrGoldenCheck.kt`, 52 dòng valid từ
+`tools/make_ocr_golden.py`): độ chính xác như Mac (CER máy 5.19% / Mac 5.15%, 42/52 dòng chữ trùng hệt; 30/52 trùng mọi lát:
+bộ tính int8 ARMv7 làm tròn hơi khác). Tốc độ riêng model, ms / dòng (cỡ 320 / 640 / 1280 / 2000):
+- LiteRT 1.4.2, API Interpreter: 661 / 1337 / 2698 / 4248 (chậm 7.7x so với benchmark_model)
+- LiteRT 2.3.0, API Interpreter (+ setUseXNNPACK): 230 / 484 / 1024 / 1665
+- **LiteRT 2.3.0, API CompiledModel (CPU 4 luồng): 81 / 172 / 387 / 659** = bằng benchmark_model -> 1 trang A4 ~11-12 s.
+- Nâng LiteRT 2.3.0 cần Kotlin 2.3.21 (thư viện biên dịch bằng Kotlin 2.4); GpuDelegate kiểu cũ bị bỏ (GPU chỉ qua
+  CompiledModel) -> tạm tắt GPU trong "Đo tốc độ" của M-LSD. Golden M-LSD vẫn (A) 6/6, (B) 6/6 PASS.
 - Ảnh thật (myscans) nhạy hơn govdocs: còn cách FP32 1.3-2 điểm. Chưa đo tốc độ trên Bee 3.
 
 ## Bài học

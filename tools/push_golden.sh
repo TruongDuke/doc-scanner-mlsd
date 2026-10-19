@@ -17,6 +17,17 @@ FILES="golden/meta.json $(ls golden/*.bin) $(find samples -maxdepth 1 -type f \(
 "$ADB" shell "run-as $PKG sh -c 'rm -rf files/golden && mkdir -p files/golden && cp $TMP/* files/golden/'"
 "$ADB" shell "rm -rf $TMP"
 
+# Golden OCR (tools/make_ocr_golden.py) -> files/golden/ocr/
+if [ -d golden/ocr ]; then
+    "$ADB" shell "rm -rf $TMP && mkdir -p $TMP"
+    "$ADB" push golden/ocr/. "$TMP/" 2>&1 | tail -1
+    "$ADB" shell "run-as $PKG sh -c 'mkdir -p files/golden/ocr && cp $TMP/* files/golden/ocr/'"
+    "$ADB" shell "rm -rf $TMP"
+    want=$(ls golden/ocr | wc -l | tr -d ' ')
+    got=$("$ADB" shell "run-as $PKG ls files/golden/ocr" | wc -l | tr -d ' ')
+    echo "OCR: $got/$want file tren may"
+fi
+
 # 3. Kiểm tra kích thước từng file trên máy khớp với file trên Mac
 bad=0
 for f in $FILES; do

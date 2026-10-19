@@ -194,6 +194,19 @@ fun ScannerScreen(modifier: Modifier = Modifier) {
         }) {
             Text("Đo tốc độ")
         }
+        // Model đọc chữ INT8 trên máy có ra cùng kết quả như Mac không, đọc đúng bao nhiêu, mỗi dòng bao lâu (OcrGoldenCheck.kt)
+        Button(onClick = {
+            goldenReport = "Đang kiểm tra OCR (nạp 4 model, đọc các dòng mẫu)..."
+            scope.launch {
+                goldenReport = withContext(Dispatchers.Default) {
+                    val rec = OcrRecognizer(context)
+                    try { runOcrGoldenCheck(context, rec) } finally { rec.close() }
+                }
+                Log.d("OCR", goldenReport ?: "")
+            }
+        }) {
+            Text("Kiểm tra OCR")
+        }
         Spacer(Modifier.height(16.dp))
 
         val bmp = bitmap

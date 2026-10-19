@@ -5,7 +5,6 @@ import android.graphics.Bitmap
 import org.tensorflow.lite.DataType
 import org.tensorflow.lite.Interpreter
 import org.tensorflow.lite.Tensor
-import org.tensorflow.lite.gpu.GpuDelegate
 import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -48,11 +47,10 @@ enum class ModelChoice(val label: String, val file: String) {
     NAVER_FP16("NAVER FP16", "M-LSD_512_tiny_fp16.tflite"),
 }
 
-// useGpu: chạy trên GPU qua GpuDelegate (phép nào GPU không làm được thì tự quay về CPU).
+// useGpu: LiteRT 2.3.0 bỏ GpuDelegate kiểu cũ (GPU chỉ còn qua API CompiledModel) -> tạm thời báo không hỗ trợ.
 // Lưu ý: model chạy GPU phải được tạo và dùng trên cùng 1 luồng, dùng xong gọi close().
 class MlsdModel(context: Context, modelFile: String = ModelChoice.INT8_FIXED.file, useGpu: Boolean = false) {
     private val interpreter: Interpreter
-    private val gpu: GpuDelegate?
 
     init {
         // Đọc file model trong assets/ (map thẳng vào bộ nhớ, không chép)
@@ -61,14 +59,12 @@ class MlsdModel(context: Context, modelFile: String = ModelChoice.INT8_FIXED.fil
             .map(FileChannel.MapMode.READ_ONLY, fd.startOffset, fd.declaredLength)
         val options = Interpreter.Options().setNumThreads(4)
         // GPU: cho phép tính bằng FP16 (nhanh hơn trên GPU điện thoại, sai số rất nhỏ)
-        gpu = if (useGpu) GpuDelegate(GpuDelegate.Options().setPrecisionLossAllowed(true)) else null
-        gpu?.let { options.addDelegate(it) }
+        if (useGpu) throw UnsupportedOperationException("GPU chưa hỗ trợ với LiteRT 2.3.0")
         interpreter = Interpreter(model, options)
     }
 
     fun close() {
         interpreter.close()
-        gpu?.close()
     }
 
     // Tìm đầu ra theo kích thước (thứ tự đầu ra mỗi model có thể khác nhau)
