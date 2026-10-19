@@ -3,6 +3,9 @@
 #
 # Bộ dữ liệu: thư mục ảnh + file nhãn kiểu PaddleOCR, mỗi dòng "đường_dẫn_tương_đối<TAB>chữ đúng".
 # Model: file .onnx (vào NCHW) hoặc .tflite (vào NHWC), ảnh dòng cao 48, đệm cho đủ rộng 320, chuẩn hoá (x/255-0.5)/0.5.
+#   Nhiều cỡ độ rộng (TFLite kích thước cố định, tools/export_ocr_tflite.py): --model có "{w}", vd.
+#   data/models/ocr/tflite/ft2_w{w}/ft2_w{w}_float32.tflite --buckets 320,640,1280,2000 -> mỗi dòng dùng cỡ nhỏ nhất đủ rộng.
+#   TFLite vào / ra int8 (do ai_edge_quantizer tạo) được tự đổi số theo scale / zero_point.
 # Từ điển: lấy từ metadata của .onnx (model RapidOCR) hoặc file --dict (mỗi dòng 1 ký tự); tự thêm khoảng trắng cuối
 # và ký tự trống (blank) ở đầu, giống PaddleOCR use_space_char.
 #
@@ -47,9 +50,32 @@ class Recognizer:
     def __call__(self, x_nchw):
         if self.kind == ".onnx":
             return self.sess.run(None, {self.inp: x_nchw})[0][0]
-        self.it.set_tensor(self.din["index"], x_nchw.transpose(0, 2, 3, 1).copy())
+        x = x_nchw.transpose(0, 2, 3, 1)
+        if self.din["dtype"] == np.int8:
+            s, z = self.din["quantization"]
+            x = np.clip(np.round(x / s + z), -128, 127).astype(np.int8)
+        self.it.set_tensor(self.din["index"], np.ascontiguousarray(x))
         self.it.invoke()
-        return self.it.get_tensor(self.dout["index"])[0]
+        y = self.it.get_tensor(self.dout["index"])[0]
+        if self.dout["dtype"] == np.int8:
+            s, z = self.dout["quantization"]
+            y = (y.astype(np.float32) - z) * s
+        return y
+
+
+class BucketRecognizer:
+    # Nhiều file TFLite, mỗi file 1 độ rộng cố định: dòng cần rộng w -> cỡ nhỏ nhất >= w (dài hơn cỡ lớn nhất thì bị ép)
+    def __init__(self, pattern, buckets):
+        self.buckets = sorted(buckets)
+        self.recs = {b: Recognizer(pattern.replace("{w}", str(b))) for b in self.buckets}
+
+    def width(self, bgr, height=48):
+        need = int(np.ceil(height * bgr.shape[1] / bgr.shape[0]))
+        return next((b for b in self.buckets if b >= need), self.buckets[-1])
+
+    def read(self, bgr):
+        w = self.width(bgr)
+        return self.recs[w](prep(bgr, w))
 
 
 def prep(bgr, width=320, height=48):
@@ -101,16 +127,22 @@ def main():
     ap.add_argument("--dict", help="file từ điển (bỏ trống: lấy từ metadata .onnx)")
     ap.add_argument("--show", type=int, default=10, help="in bao nhiêu dòng sai đầu tiên")
     ap.add_argument("--width", type=int, default=320, help="độ rộng ảnh vào; 0 = tự động theo độ dài dòng (chỉ .onnx)")
+    ap.add_argument("--buckets", help="các cỡ độ rộng, vd. 320,640,1280,2000 (khi --model có {w})")
     args = ap.parse_args()
 
     chars = load_dict(args.model, args.dict)
-    rec = Recognizer(args.model)
+    if args.buckets:
+        br = BucketRecognizer(args.model, [int(b) for b in args.buckets.split(",")])
+        read = br.read
+    else:
+        rec = Recognizer(args.model)
+        read = lambda bgr: rec(prep(bgr, args.width))
     n_err = n_err_nm = n_chars = n_chars_nm = n_ok = n = 0
     wrong = []
     for line in open(os.path.join(args.data, args.labels), encoding="utf-8"):
         path, gt = line.rstrip("\n").split("\t", 1)
         gt = unicodedata.normalize("NFC", gt)
-        pred = unicodedata.normalize("NFC", ctc_decode(rec(prep(cv2.imread(os.path.join(args.data, path)), args.width)), chars))
+        pred = unicodedata.normalize("NFC", ctc_decode(read(cv2.imread(os.path.join(args.data, path))), chars))
         e = levenshtein(pred, gt)
         n_err += e
         n_chars += len(gt)
@@ -120,7 +152,7 @@ def main():
         n += 1
         if e and len(wrong) < args.show:
             wrong.append((gt, pred))
-    print(f"{os.path.basename(args.model)} | rong {args.width or 'tu dong'} | {n} dong | CER {n_err / n_chars * 100:.2f}% | CER bo dau {n_err_nm / n_chars_nm * 100:.2f}% "
+    print(f"{os.path.basename(args.model)} | rong {('co ' + args.buckets) if args.buckets else (args.width or 'tu dong')} | {n} dong | CER {n_err / n_chars * 100:.2f}% | CER bo dau {n_err_nm / n_chars_nm * 100:.2f}% "
           f"| dong dung {n_ok / n * 100:.1f}%")
     for gt, pred in wrong:
         print(f"   dung: {gt!r:32}  doc: {pred!r}")

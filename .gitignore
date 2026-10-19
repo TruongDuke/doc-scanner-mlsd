@@ -11,3 +11,4 @@ samples/*
 android/.idea/
 data/
 .venv-paddle/
+.venv-tf/
