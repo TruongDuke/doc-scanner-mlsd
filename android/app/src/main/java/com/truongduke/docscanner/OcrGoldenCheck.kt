@@ -78,3 +78,48 @@ fun runOcrGoldenCheck(context: Context, rec: OcrRecognizer): String {
     if (diffs.isNotEmpty()) sb.append("\nDòng khác Mac:\n").append(diffs)
     return sb.toString()
 }
+
+// Nút "Kiểm tra OCR trang": cả chuỗi OcrPage (DBNet -> khung xoay -> cắt dòng -> đọc) trên điểm ảnh trang y hệt Mac
+// (tools/make_ocr_page_golden.py -> golden/ocr_page/), so với kết quả bản Python (tools/det_simple.py).
+// Không mong khớp tuyệt đối: co ảnh của Android (Bitmap.createScaledBitmap) và cv2.resize nội suy hơi khác nhau.
+fun runOcrPageGoldenCheck(context: Context, page: OcrPage): String {
+    val dir = File(goldenDir(context), "ocr_page")
+    val metaFile = File(dir, "meta.json")
+    if (!metaFile.exists()) return "Chưa có golden OCR trang.\nTrên Mac: tools/make_ocr_page_golden.py rồi tools/push_golden.sh"
+    val meta = JSONArray(metaFile.readText())
+    val sb = StringBuilder("Kiểm tra OCR trang (${meta.length()} trang)\n")
+    fun bounds(c: FloatArray) = floatArrayOf(minOf(c[0], c[2], c[4], c[6]), minOf(c[1], c[3], c[5], c[7]),
+        maxOf(c[0], c[2], c[4], c[6]), maxOf(c[1], c[3], c[5], c[7]))
+    fun iou(a: FloatArray, b: FloatArray): Float {
+        val ix = maxOf(0f, minOf(a[2], b[2]) - maxOf(a[0], b[0]))
+        val iy = maxOf(0f, minOf(a[3], b[3]) - maxOf(a[1], b[1]))
+        val inter = ix * iy
+        return inter / ((a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter + 1e-6f)
+    }
+    for (i in 0 until meta.length()) {
+        val m = meta.getJSONObject(i)
+        val h = m.getInt("h")
+        val w = m.getInt("w")
+        val rgb = File(dir, "${m.getString("name")}_rgb.bin").readBytes()
+        val px = IntArray(w * h) { k ->
+            (0xff shl 24) or ((rgb[3 * k].toInt() and 0xff) shl 16) or ((rgb[3 * k + 1].toInt() and 0xff) shl 8) or (rgb[3 * k + 2].toInt() and 0xff)
+        }
+        val bmp = android.graphics.Bitmap.createBitmap(px, w, h, android.graphics.Bitmap.Config.ARGB_8888)
+        page.read(bmp)                                   // làm nóng (lần đầu còn tính nạp model)
+        val r = page.read(bmp)
+        val pyBoxes = m.getJSONArray("boxes").let { a -> List(a.length()) { k -> a.getJSONArray(k).let { b -> FloatArray(8) { b.getDouble(it).toFloat() } } } }
+        val pyTexts = m.getJSONArray("texts").let { a -> List(a.length()) { a.getString(it) } }.filter { it.isNotEmpty() }
+        val mine = r.lines.map { bounds(it.box.corners) }
+        val matched = pyBoxes.count { pb -> mine.any { iou(bounds(pb), it) >= 0.5f } }
+        val pyAll = nfc(pyTexts.joinToString("\n"))
+        val myAll = nfc(r.text)
+        sb.append("■ ${m.getString("name")} ($w x $h)\n")
+        sb.append("  dòng: máy ${r.lines.size}, Mac ${pyTexts.size}; khung Mac tìm lại được $matched/${pyBoxes.size}\n")
+        sb.append("  dòng chữ trùng hệt Mac: ${r.lines.count { it.text in pyTexts }}/${pyTexts.size}; " +
+            "chữ cả trang lệch Mac %.2f%%\n".format(levenshtein(myAll, pyAll) * 100.0 / pyAll.length))
+        sb.append("  thời gian: tìm dòng ${r.detMs} ms, xử lý khung ${r.postMs} ms, đọc chữ ${r.recMs} ms\n")
+        sb.append("  3 dòng đầu: ${r.lines.take(3).joinToString(" | ") { it.text }}\n")
+        bmp.recycle()
+    }
+    return sb.toString()
+}

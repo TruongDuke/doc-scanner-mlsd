@@ -178,6 +178,21 @@ bộ tính int8 ARMv7 làm tròn hơi khác). Tốc độ riêng model, ms / dò
   CompiledModel) -> tạm tắt GPU trong "Đo tốc độ" của M-LSD. Golden M-LSD vẫn (A) 6/6, (B) 6/6 PASS.
 - Ảnh thật (myscans) nhạy hơn govdocs: còn cách FP32 1.3-2 điểm. Chưa đo tốc độ trên Bee 3.
 
+## Đọc cả trang trong app (21/10)
+
+Tìm dòng: DBNet PP-OCRv5 mobile det (RapidOCR, FP32 TFLite cỡ cố định 1408x992 trang dọc / 992x1408 trang ngang).
+Bee 3 (benchmark_model): 2.0 s ở 1408x992, 1.2 s ở 1024x736 (cỡ nhỏ tìm lại kém hơn: 96.7% so với 98.9%).
+Xử lý sau DBNet đơn giản để viết lại bằng Kotlin (`tools/det_simple.py` -> `OcrPage.kt`): vùng liền nhau + khung xoay theo
+hướng chính (PCA), nới theo công thức unclip của RapidOCR, cắt dòng bằng affine. Trên 11 trang dọc đã chụp:
+- khung thẳng + điểm TB trên cả khung: tìm lại 64% dòng của RapidOCR (dòng nghiêng nhẹ bị điểm thấp -> bỏ)
+- điểm TB trên các điểm của vùng: 98.9%; nhưng khung thẳng ôm luôn dòng bên cạnh (trang lệch ~1 độ) -> CER cả chuỗi 46%
+- khung xoay (PCA) + nghiêng > 20 độ coi như ngang (ô số "1"): CER 5.81% so với 5.07% khi dùng khung RapidOCR
+  (phần chênh chủ yếu do cách chấm: gộp "sự sống" + "của" thành 1 dòng, hàng chấm điền chỗ trống)
+App (Bee 3, "Kiểm tra OCR trang", 3 trang): khung trùng Mac 30/30, 38/38, 58/58; chữ cả trang lệch Mac 2.3-5.9% (Android co / cắt
+ảnh hơi khác cv2; chưa chấm theo đáp án). Thời gian 1 trang 7-15 s (tìm dòng ~2.3 s, đọc chữ 4.7-12.8 s).
+Lỗi đã gặp: CompiledModel.create không truyền Environment -> môi trường tạm bị GC huỷ giữa chừng -> treo "Đang đọc chữ...".
+Sửa: 1 Environment dùng chung, giữ suốt đời OcrRecognizer.
+
 ## Bài học
 - Chọn bộ test đúng loại tài liệu: cùng model FT1 mà VinText (chữ ngoài đường) cho kết luận "tệ hơn B0", văn bản in cho "tốt hơn B0 3 lần".
 - Đánh giá chỉ trên ảnh tổng hợp cùng kiểu với train là **đánh lừa** (FT1: 0.51% tổng hợp nhưng 35.6% thật). Quyết định dựa trên **valid thật** (VinText valid, sau này ảnh scan).

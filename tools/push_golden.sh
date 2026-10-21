@@ -28,6 +28,14 @@ if [ -d golden/ocr ]; then
     echo "OCR: $got/$want file tren may"
 fi
 
+# Golden OCR cả trang (tools/make_ocr_page_golden.py) -> files/golden/ocr_page/
+if [ -d golden/ocr_page ]; then
+    "$ADB" shell "rm -rf $TMP && mkdir -p $TMP"
+    "$ADB" push golden/ocr_page/. "$TMP/" 2>&1 | tail -1
+    "$ADB" shell "run-as $PKG sh -c 'mkdir -p files/golden/ocr_page && cp $TMP/* files/golden/ocr_page/'"
+    "$ADB" shell "rm -rf $TMP"
+fi
+
 # 3. Kiểm tra kích thước từng file trên máy khớp với file trên Mac
 bad=0
 for f in $FILES; do

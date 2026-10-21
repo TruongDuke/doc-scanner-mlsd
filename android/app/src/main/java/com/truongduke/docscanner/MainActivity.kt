@@ -207,6 +207,19 @@ fun ScannerScreen(modifier: Modifier = Modifier) {
         }) {
             Text("Kiểm tra OCR")
         }
+        // Cả chuỗi đọc trang (tìm dòng + đọc) so với bản Python trên 3 trang mẫu (OcrGoldenCheck.kt)
+        Button(onClick = {
+            goldenReport = "Đang kiểm tra OCR trang (3 trang, mỗi trang chạy 2 lần)..."
+            scope.launch {
+                goldenReport = withContext(Dispatchers.Default) {
+                    val page = OcrPage(context)
+                    try { runOcrPageGoldenCheck(context, page) } finally { page.close() }
+                }
+                Log.d("OCR", goldenReport ?: "")
+            }
+        }) {
+            Text("Kiểm tra OCR trang")
+        }
         Spacer(Modifier.height(16.dp))
 
         val bmp = bitmap

@@ -3,6 +3,7 @@ package com.truongduke.docscanner
 import android.content.Context
 import com.google.ai.edge.litert.Accelerator
 import com.google.ai.edge.litert.CompiledModel
+import com.google.ai.edge.litert.Environment
 import com.google.ai.edge.litert.TensorBuffer
 import org.tensorflow.lite.DataType
 import org.tensorflow.lite.Interpreter
@@ -36,6 +37,11 @@ class OcrRecognizer(
 
     private val models = HashMap<Int, Loaded>()
 
+    // Môi trường LiteRT dùng chung cho mọi CompiledModel, giữ suốt đời đối tượng này. KHÔNG để CompiledModel.create tự tạo:
+    // môi trường tạm không ai giữ tham chiếu -> bộ dọn rác (GC) huỷ giữa chừng -> nhóm luồng tính toán bị xoá, model đang
+    // chạy chờ mãi (treo "Đang đọc chữ...", Bee 3 21/10)
+    val env: Environment = Environment.create(emptyMap())
+
     // Thời gian riêng phần model (ms) của lần runIdx gần nhất, không tính đổi số đầu vào / chọn ký tự
     var lastModelMs = 0.0
 
@@ -61,7 +67,7 @@ class OcrRecognizer(
                 interp.close()
                 val opts = CompiledModel.Options(Accelerator.CPU)
                 opts.cpuOptions = CompiledModel.CpuOptions(4, null, null)
-                val cm = CompiledModel.create(context.assets, file, opts)
+                val cm = CompiledModel.create(context.assets, file, opts, env)
                 Loaded(null, cm, cm.createInputBuffers(), cm.createOutputBuffers(), inInt8, scale, zero, outShape[1], outShape[2])
             } else {
                 Loaded(interp, null, null, null, inInt8, scale, zero, outShape[1], outShape[2])
@@ -114,5 +120,6 @@ class OcrRecognizer(
     fun close() = synchronized(models) {
         models.values.forEach { m -> m.interp?.close(); m.inBufs?.forEach { it.close() }; m.outBufs?.forEach { it.close() }; m.cm?.close() }
         models.clear()
+        env.close()
     }
 }

@@ -38,6 +38,17 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.core.content.ContextCompat
 import kotlin.math.min
 
@@ -105,6 +116,30 @@ fun EditScreen(bitmap: Bitmap, initialQuad: FloatArray?, info: String, onRetake:
 fun ResultScreen(scan: Bitmap, onBack: () -> Unit, onNew: () -> Unit) {
     val context = LocalContext.current
     var message by remember { mutableStateOf<String?>(null) }
+    // Đọc chữ (OcrPage.kt): nạp model lúc bấm lần đầu, đóng khi rời màn hình
+    val ocr = remember { lazy { OcrPage(context) } }
+    DisposableEffect(Unit) { onDispose { if (ocr.isInitialized()) ocr.value.close() } }
+    var ocrResult by remember { mutableStateOf<OcrPage.Result?>(null) }
+    var reading by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val clipboard = LocalClipboardManager.current
+
+    val res = ocrResult
+    if (res != null) {
+        // Màn hình chữ đọc được: bôi chọn được, có nút sao chép
+        Column(Modifier.fillMaxSize().background(Color.White).padding(16.dp)) {
+            Text("${res.lines.size} dòng | tìm dòng ${res.detMs} ms, xử lý ${res.postMs} ms, đọc chữ ${res.recMs} ms",
+                fontSize = 12.sp, color = Color.Gray)
+            SelectionContainer(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(vertical = 8.dp)) {
+                Text(res.text.ifEmpty { "(không tìm thấy chữ)" }, fontSize = 15.sp)
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                Button(onClick = { clipboard.setText(AnnotatedString(res.text)); message = "Đã sao chép ${res.text.length} ký tự" }) { Text("Sao chép") }
+                Button(onClick = { ocrResult = null }) { Text("Quay lại") }
+            }
+        }
+        return
+    }
 
     fun save() {
         message = try {
@@ -123,13 +158,31 @@ fun ResultScreen(scan: Bitmap, onBack: () -> Unit, onNew: () -> Unit) {
             Image(scan.asImageBitmap(), "Ảnh đã nắn thẳng", Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
         }
         Text(message ?: "Kích thước: ${scan.width} x ${scan.height}", Modifier.fillMaxWidth().padding(horizontal = 16.dp), color = Color.White)
-        Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
             Button(onClick = onBack) { Text("Chỉnh lại") }
             Button(onClick = {
                 val needPermission = Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
                     ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
                 if (needPermission) askWrite.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE) else save()
             }) { Text("Lưu") }
+        }
+        // 4 nút không vừa 1 hàng trên màn hình 720 px (Bee 3) -> 2 hàng
+        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 16.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+            Button(enabled = !reading, onClick = {
+                reading = true
+                message = "Đang đọc chữ..."
+                scope.launch {
+                    try {
+                        val r = withContext(Dispatchers.Default) { ocr.value.read(scan) }
+                        ocrResult = r
+                        message = null
+                    } catch (e: Exception) {
+                        message = "Đọc chữ lỗi: ${e.message}"
+                    } finally {
+                        reading = false
+                    }
+                }
+            }) { Text("Đọc chữ") }
             Button(onClick = onNew) { Text("Chụp tiếp") }
         }
     }
