@@ -4,6 +4,10 @@ import android.content.Context
 import android.graphics.Bitmap
 import org.tensorflow.lite.DataType
 import org.tensorflow.lite.Interpreter
+import com.google.ai.edge.litert.Accelerator
+import com.google.ai.edge.litert.CompiledModel
+import com.google.ai.edge.litert.Environment
+import com.google.ai.edge.litert.TensorBuffer
 import org.tensorflow.lite.Tensor
 import java.io.FileInputStream
 import java.nio.ByteBuffer
@@ -47,10 +51,17 @@ enum class ModelChoice(val label: String, val file: String) {
     NAVER_FP16("NAVER FP16", "M-LSD_512_tiny_fp16.tflite"),
 }
 
-// useGpu: LiteRT 2.3.0 bỏ GpuDelegate kiểu cũ (GPU chỉ còn qua API CompiledModel) -> tạm thời báo không hỗ trợ.
-// Lưu ý: model chạy GPU phải được tạo và dùng trên cùng 1 luồng, dùng xong gọi close().
+// useGpu: chạy bằng API CompiledModel của LiteRT 2.x trên GPU qua OpenGL (cho phép tính FP16; phép nào GPU không làm được thì
+// về CPU). LiteRT 2.3.0 đã bỏ GpuDelegate kiểu cũ của mốc 6. Interpreter vẫn được tạo để đọc thông số vào / ra (scale,
+// zero point, kích thước) và để chạy khi useGpu = false.
+// Lưu ý: model chạy GPU nên được tạo và dùng trên cùng 1 luồng, dùng xong gọi close().
 class MlsdModel(context: Context, modelFile: String = ModelChoice.INT8_FIXED.file, useGpu: Boolean = false) {
     private val interpreter: Interpreter
+    // Đường GPU: môi trường LiteRT giữ suốt đời model (để thư viện tự tạo thì bộ dọn rác huỷ giữa chừng -> treo)
+    private val env: Environment?
+    private val cm: CompiledModel?
+    private val cmIn: List<TensorBuffer>?
+    private val cmOut: List<TensorBuffer>?
 
     init {
         // Đọc file model trong assets/ (map thẳng vào bộ nhớ, không chép)
@@ -58,12 +69,29 @@ class MlsdModel(context: Context, modelFile: String = ModelChoice.INT8_FIXED.fil
         val model = FileInputStream(fd.fileDescriptor).channel
             .map(FileChannel.MapMode.READ_ONLY, fd.startOffset, fd.declaredLength)
         val options = Interpreter.Options().setNumThreads(4)
-        // GPU: cho phép tính bằng FP16 (nhanh hơn trên GPU điện thoại, sai số rất nhỏ)
-        if (useGpu) throw UnsupportedOperationException("GPU chưa hỗ trợ với LiteRT 2.3.0")
         interpreter = Interpreter(model, options)
+        if (useGpu) {
+            env = Environment.create(emptyMap())
+            // GPU: cho phép tính bằng FP16 (nhanh hơn trên GPU điện thoại, sai số rất nhỏ), như mốc 6
+            val opts = CompiledModel.Options(Accelerator.GPU, Accelerator.CPU)
+            // Backend OpenGL: backend OpenCL (mặc định) truyền tuỳ chọn biên dịch "-cl-uniform-work-group-size" của OpenCL 2.0,
+            // driver OpenCL 1.2 của PowerVR GE8100 (Bee 3) không hiểu -> "Failed to compile model" (21/10)
+            opts.gpuOptions = CompiledModel.GpuOptions(precision = CompiledModel.GpuOptions.Precision.FP16,
+                backend = CompiledModel.GpuOptions.Backend.OPENGL)
+            cm = CompiledModel.create(context.assets, modelFile, opts, env)
+            cmIn = cm.createInputBuffers()
+            cmOut = cm.createOutputBuffers()
+            check(cmOut.size == interpreter.outputTensorCount) { "số đầu ra CompiledModel ${cmOut.size} khác Interpreter" }
+        } else {
+            env = null; cm = null; cmIn = null; cmOut = null
+        }
     }
 
     fun close() {
+        cmIn?.forEach { it.close() }
+        cmOut?.forEach { it.close() }
+        cm?.close()
+        env?.close()
         interpreter.close()
     }
 
@@ -128,9 +156,24 @@ class MlsdModel(context: Context, modelFile: String = ModelChoice.INT8_FIXED.fil
             ByteBuffer.allocateDirect(interpreter.getOutputTensor(it).numBytes()).order(ByteOrder.nativeOrder())
         }
 
-        // 4. Chạy model, đo thời gian
+        // 4. Chạy model, đo thời gian (GPU: CompiledModel; chép đầu ra về cùng chỗ chứa như đường CPU cho code sau dùng chung)
         val t1 = System.nanoTime()
-        interpreter.runForMultipleInputsOutputs(arrayOf(input), outBufs)
+        if (cm != null) {
+            if (inT.dataType() == DataType.INT8) cmIn!![0].writeInt8(ByteArray(input.remaining()).also { input.get(it) })
+            else cmIn!![0].writeFloat(FloatArray(input.remaining() / 4).also { input.asFloatBuffer().get(it) })
+            cm.run(cmIn, cmOut!!)
+            for ((i, b) in outBufs) {
+                val t = interpreter.getOutputTensor(i)
+                b.clear()
+                when (t.dataType()) {
+                    DataType.INT8 -> b.put(cmOut[i].readInt8())
+                    DataType.INT32 -> b.asIntBuffer().put(cmOut[i].readInt())
+                    else -> b.asFloatBuffer().put(cmOut[i].readFloat())
+                }
+            }
+        } else {
+            interpreter.runForMultipleInputsOutputs(arrayOf(input), outBufs)
+        }
         val timeMs = (System.nanoTime() - t1) / 1_000_000
 
         // 5. Chép ra mảng phẳng; đầu ra INT8 thì đổi ngược về số thực: (q - zero_point) * scale

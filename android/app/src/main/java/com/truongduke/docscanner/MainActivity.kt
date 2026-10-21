@@ -256,7 +256,7 @@ fun runBenchmark(context: Context, bitmap: Bitmap?): String {
         else -> listOf(ByteArray(512 * 512 * 3) { 128.toByte() }, 512, 512, "ảnh xám")
     }
     rgb as ByteArray; w as Int; h as Int
-    val sb = StringBuilder("Tốc độ phần model trên $src ($w x $h), CPU 4 thread:\n\n")
+    val sb = StringBuilder("Tốc độ phần model trên $src ($w x $h), CPU 4 thread (Interpreter), GPU FP16 (CompiledModel):\n\n")
     for (c in listOf(ModelChoice.NAVER_FP32, ModelChoice.NAVER_FP16, ModelChoice.INT8_FIXED)) {
         var cpuPts: Set<Int>? = null
         for (gpu in listOf(false, true)) {
