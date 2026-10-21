@@ -189,7 +189,8 @@ hướng chính (PCA), nới theo công thức unclip của RapidOCR, cắt dòn
 - khung xoay (PCA) + nghiêng > 20 độ coi như ngang (ô số "1"): CER 5.81% so với 5.07% khi dùng khung RapidOCR
   (phần chênh chủ yếu do cách chấm: gộp "sự sống" + "của" thành 1 dòng, hàng chấm điền chỗ trống)
 App (Bee 3, "Kiểm tra OCR trang", 3 trang): khung trùng Mac 30/30, 38/38, 58/58; chữ cả trang lệch Mac 2.3-5.9% (Android co / cắt
-ảnh hơi khác cv2; chưa chấm theo đáp án). Thời gian 1 trang 7-15 s (tìm dòng ~2.3 s, đọc chữ 4.7-12.8 s).
+ảnh hơi khác cv2). Chấm theo đáp án (2 trang valid): trang sách máy 3.49% / Mac 3.80% (29 dòng), tờ khai CT01 máy 10.14% / Mac
+11.27% (34 dòng) -> khác Mac nhưng không kém hơn. Thời gian 1 trang 7-15 s (tìm dòng ~2.3 s, đọc chữ 4.7-12.8 s).
 Lỗi đã gặp: CompiledModel.create không truyền Environment -> môi trường tạm bị GC huỷ giữa chừng -> treo "Đang đọc chữ...".
 Sửa: 1 Environment dùng chung, giữ suốt đời OcrRecognizer.
 

@@ -117,6 +117,21 @@ fun runOcrPageGoldenCheck(context: Context, page: OcrPage): String {
         sb.append("  dòng: máy ${r.lines.size}, Mac ${pyTexts.size}; khung Mac tìm lại được $matched/${pyBoxes.size}\n")
         sb.append("  dòng chữ trùng hệt Mac: ${r.lines.count { it.text in pyTexts }}/${pyTexts.size}; " +
             "chữ cả trang lệch Mac %.2f%%\n".format(levenshtein(myAll, pyAll) * 100.0 / pyAll.length))
+        // Chấm theo đáp án (trang có đáp án): mỗi khung Mac có đáp án -> dòng của máy trùng khung nhất (IoU >= 0.5)
+        val gts = m.optJSONArray("gts")
+        if (gts != null) {
+            val pyAllTexts = m.getJSONArray("texts").let { a -> List(a.length()) { a.getString(it) } }
+            var eDev = 0; var eMac = 0; var nGt = 0; var nLine = 0
+            for (k in 0 until gts.length()) {
+                if (gts.isNull(k)) continue
+                val gt = nfc(gts.getString(k))
+                val pb = bounds(pyBoxes[k])
+                val best = r.lines.maxByOrNull { iou(bounds(it.box.corners), pb) }
+                val dev = if (best != null && iou(bounds(best.box.corners), pb) >= 0.5f) best.text else ""
+                eDev += levenshtein(dev, gt); eMac += levenshtein(nfc(pyAllTexts[k]), gt); nGt += gt.length; nLine++
+            }
+            if (nLine > 0) sb.append("  CER theo đáp án ($nLine dòng): máy %.2f%% | Mac %.2f%%\n".format(eDev * 100.0 / nGt, eMac * 100.0 / nGt))
+        }
         sb.append("  thời gian: tìm dòng ${r.detMs} ms, xử lý khung ${r.postMs} ms, đọc chữ ${r.recMs} ms\n")
         sb.append("  3 dòng đầu: ${r.lines.take(3).joinToString(" | ") { it.text }}\n")
         bmp.recycle()
